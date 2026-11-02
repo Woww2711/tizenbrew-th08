@@ -60,14 +60,28 @@ function checkGraphics() {
   return report('4 WebGL 2 + OffscreenCanvas', ok, 'webgl2=' + !!gl + ', OffscreenCanvas=' + typeof OffscreenCanvas);
 }
 
+// Row 7. On the TV (file://) the service must have opened this page, so openMethod is
+// required too; the service records it right after Page.navigate answers, so allow ~3 s.
+// A page opened by hand in a desktop browser has no open method.
 function checkService() {
-  return serviceFetch('/status', {}, 5000, function (r) {
-    if (r.status !== 200) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }).then(function (s) {
-    return report('7 service status', !!s.dataDir && typeof s.node === 'string' && typeof s.version === 'string',
-      'dataDir=' + s.dataDir + ', node=' + s.node + ', open=' + s.openMethod + ', version=' + s.version);
-  }, function (e) { return report('7 service status', false, String(e)); });
+  var onTv = location.protocol === 'file:';
+  var tries = 0;
+  function attempt() {
+    tries++;
+    return serviceFetch('/status', {}, 5000, function (r) {
+      if (r.status !== 200) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (s) {
+      var opened = s.openMethod === 'devtools' || s.openMethod === 'launchUrl';
+      if (onTv && !opened && tries < 6) {
+        return new Promise(function (resolve) { setTimeout(resolve, 500); }).then(attempt);
+      }
+      var ok = !!s.dataDir && typeof s.node === 'string' && typeof s.version === 'string' && (opened || !onTv);
+      return report('7 service status', ok, 'dataDir=' + s.dataDir + ', node=' + s.node + ', open=' +
+        s.openMethod + ', version=' + s.version + (onTv ? '' : ' (desktop: open method not required)'));
+    });
+  }
+  return attempt().catch(function (e) { return report('7 service status', false, String(e)); });
 }
 
 // Reads [start, start+length) of `file` on this thread and hands it to a waiting worker
