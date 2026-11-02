@@ -69,8 +69,166 @@ function addReport(report) {
   if (status.reports.length > 200) status.reports.shift();
 }
 
+// ---- src/service/20-http.js
+// HTTP API on 127.0.0.1:PORT. The spike page is a file:// document (origin "null"), so
+// every response allows any origin and is loadable under COEP require-corp.
+var fileDir = null;             // directory of the files served on /file/<name>
+var FILE_ALLOW = [SYNTHETIC_NAME];
+var openHandler = null;         // set once the spike is installed
+
+function setCors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+}
+
+function sendJson(res, code, obj) {
+  var body = JSON.stringify(obj);
+  res.writeHead(code, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) });
+  res.end(body);
+}
+
+function readBody(req, limit, cb) {
+  var chunks = [], size = 0, done = false;
+  req.on('data', function (chunk) {
+    if (done) return;
+    size += chunk.length;
+    if (size > limit) { done = true; cb(new Error('body larger than ' + limit + ' bytes')); return; }
+    chunks.push(chunk);
+  });
+  req.on('end', function () { if (!done) { done = true; cb(null, Buffer.concat(chunks).toString('utf8')); } });
+  req.on('error', function (e) { if (!done) { done = true; cb(e); } });
+}
+
+// Only "bytes=a-b" and "bytes=a-"; anything else is unsatisfiable.
+function parseRange(header, size) {
+  var m = /^bytes=(\d+)-(\d*)$/.exec(header || '');
+  if (!m) return null;
+  var start = Number(m[1]);
+  var end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+  if (start >= size || start > end) return null;
+  return { start: start, end: end };
+}
+
+function serveFile(req, res, name) {
+  if (!fileDir || FILE_ALLOW.indexOf(name) < 0) return sendJson(res, 404, { error: 'not found: ' + name });
+  var file = path.join(fileDir, name);
+  fs.stat(file, function (err, st) {
+    if (err) return sendJson(res, 404, { error: 'not found: ' + name });
+    var headers = { 'Content-Type': 'application/octet-stream', 'Accept-Ranges': 'bytes' };
+    if (req.headers.range) {
+      var r = parseRange(req.headers.range, st.size);
+      if (!r) {
+        res.writeHead(416, { 'Content-Range': 'bytes */' + st.size });
+        return res.end();
+      }
+      headers['Content-Range'] = 'bytes ' + r.start + '-' + r.end + '/' + st.size;
+      headers['Content-Length'] = r.end - r.start + 1;
+      res.writeHead(206, headers);
+      return pipeFile(fs.createReadStream(file, { start: r.start, end: r.end }), res);
+    }
+    headers['Content-Length'] = st.size;
+    res.writeHead(200, headers);
+    pipeFile(fs.createReadStream(file), res);
+  });
+}
+
+// A read error after the headers went out can only cut the response short.
+function pipeFile(stream, res) {
+  stream.on('error', function (e) {
+    log('read error: ' + e.message);
+    res.destroy();
+  });
+  stream.pipe(res);
+}
+
+function handle(req, res) {
+  setCors(res);
+  var url = req.url.split('?')[0];
+  if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+  if (req.method === 'GET' && url === '/status') return sendJson(res, 200, status);
+  if (req.method === 'POST' && url === '/report') {
+    return readBody(req, 65536, function (err, text) {
+      if (err) return sendJson(res, 413, { error: err.message });
+      var report;
+      try { report = JSON.parse(text); } catch (e) { report = null; }
+      if (!report || typeof report !== 'object' || Array.isArray(report)) {
+        return sendJson(res, 400, { error: 'body must be a JSON object' });
+      }
+      report.at = new Date().toISOString();
+      addReport(report);
+      res.writeHead(204);
+      res.end();
+    });
+  }
+  if (req.method === 'POST' && url === '/open') {
+    if (!openHandler) return sendJson(res, 409, { error: 'not ready' });
+    openHandler();
+    return sendJson(res, 202, { opening: true });
+  }
+  if (req.method === 'GET' && url.indexOf('/file/') === 0) {
+    var name;
+    try { name = decodeURIComponent(url.slice('/file/'.length)); } catch (e) {
+      return sendJson(res, 400, { error: 'bad file name' });
+    }
+    return serveFile(req, res, name);
+  }
+  sendJson(res, 404, { error: 'not found' });
+}
+
+var server = http.createServer(handle);
+
+// ---- src/service/30-install.js
+// Installing the spike. Until Task 3 adds the downloads, only an already installed
+// spike (version marker present) counts as installed.
+function mkdirp(dir) {
+  if (fs.existsSync(dir)) return;
+  mkdirp(path.dirname(dir));
+  fs.mkdirSync(dir);
+}
+
+function readText(file) {
+  try { return fs.readFileSync(file, 'utf8'); } catch (e) { return null; }
+}
+
+function install() {
+  var base = resolveDataDir();
+  var dir = path.join(base, 'th08', 'spike');
+  status.dataDir = base;
+  status.launcherUrl = 'file://' + path.join(dir, 'spike.html');
+  mkdirp(dir);
+  fileDir = dir;
+  if (readText(path.join(dir, '.complete')) === VERSION) return Promise.resolve();
+  return Promise.reject(new Error('spike not installed'));
+}
+
 // ---- src/service/50-main.js
+server.on('error', function (e) {
+  status.state = 'error';
+  status.error = 'port ' + PORT + ': ' + e.message;
+});
+
+server.listen(PORT, '127.0.0.1', function () {
+  Promise.resolve().then(install).then(function () {
+    status.state = 'ready';
+    log('ready');
+  }, function (e) {
+    status.state = 'error';
+    status.error = e.message;
+    log('install failed: ' + e.message);
+  });
+});
+
 module.exports = {
   status: status,
-  onStop: function () {}
+  // TizenBrew from 2.1 opens the URL this returns instead of the module's appPath.
+  launchUrl: function () {
+    if (status.state !== 'ready') return null;
+    status.openMethod = 'launchUrl';
+    return status.launcherUrl;
+  },
+  onStop: function () { server.close(); },
+  _test: { parseRange: parseRange }
 };
