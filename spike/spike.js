@@ -61,8 +61,11 @@ function checkGraphics() {
 }
 
 function checkService() {
-  return serviceFetch('/status', {}, 5000, function (r) { return r.json(); }).then(function (s) {
-    return report('7 service status', !!s.dataDir,
+  return serviceFetch('/status', {}, 5000, function (r) {
+    if (r.status !== 200) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function (s) {
+    return report('7 service status', !!s.dataDir && typeof s.node === 'string' && typeof s.version === 'string',
       'dataDir=' + s.dataDir + ', node=' + s.node + ', open=' + s.openMethod + ', version=' + s.version);
   }, function (e) { return report('7 service status', false, String(e)); });
 }
@@ -70,11 +73,12 @@ function checkService() {
 // Reads [start, start+length) of `file` on this thread and hands it to a waiting worker
 // through shared memory, like the runtime's music reader. Resolves with the worker's verdict
 // plus timings: ms (whole run, worker start included), readMs (until the read settled and
-// the worker was notified) and ackMs (from that notify to the worker's answer). A watchdog
+// the worker was notified), ackMs (from that notify to the worker's answer) and wakeMs
+// (from the read starting to the worker's answer). A watchdog
 // ends the run if the worker never answers.
 function sharedRead(file, start, length, timeoutMs) {
   return new Promise(function (resolve) {
-    var t0 = Date.now(), notifiedAt = null, done = false;
+    var t0 = Date.now(), notifiedAt = null, readStartAt = null, done = false;
     var sab = new SharedArrayBuffer(8 + length);
     var status = new Int32Array(sab, 0, 1);
     var worker = new Worker('worker.js');
@@ -89,6 +93,7 @@ function sharedRead(file, start, length, timeoutMs) {
       r.ms = Date.now() - t0;
       r.readMs = notifiedAt === null ? null : notifiedAt - t0;
       r.ackMs = notifiedAt === null ? null : Date.now() - notifiedAt;
+      r.wakeMs = readStartAt === null ? null : Date.now() - readStartAt;
       resolve(r);
     }
     function notify(value) {
@@ -99,17 +104,18 @@ function sharedRead(file, start, length, timeoutMs) {
     worker.onerror = function (e) { finish({ ok: false, value: null, why: 'worker error: ' + e.message }); };
     worker.onmessage = function (e) {
       if (e.data.type !== 'waiting') return finish(e.data);
+      readStartAt = Date.now();
       file.slice(start, start + length).arrayBuffer().then(function (buf) {
         new Uint8Array(sab, 8).set(new Uint8Array(buf));
         notify(buf.byteLength + 1);
-      }, function () { notify(-1); });
+      }).catch(function () { notify(-1); });
     };
     worker.postMessage({ sab: sab, start: start, length: length, timeoutMs: timeoutMs });
   });
 }
 
 function timings(r) {
-  return r.why + '; read ' + r.readMs + ' ms, ack ' + r.ackMs + ' ms, total ' + r.ms + ' ms';
+  return r.why + '; read ' + r.readMs + ' ms, ack ' + r.ackMs + ' ms, wake ' + r.wakeMs + ' ms, total ' + r.ms + ' ms';
 }
 
 function checkWorker() {
@@ -123,15 +129,15 @@ function checkRemoteRead() {
   var good = new RemoteFile(SERVICE, 'synthetic.bin', SYNTHETIC_SIZE);
   var missing = new RemoteFile(SERVICE, 'missing.bin', SYNTHETIC_SIZE);
   // Spec §4 row 5: the worker answers within 2 s of the notify; a failed read wakes it
-  // with -1 within 10 s.
+  // with -1 within 10 s of the read starting.
   return sharedRead(good, 300000, 65536, 12000).then(function (r) {
     return report('5a range read → worker', r.ok && r.ackMs !== null && r.ackMs <= 2000, timings(r));
-  }).then(function () {
+  }, function (e) { return report('5a range read → worker', false, String(e)); }).then(function () {
     return sharedRead(missing, 0, 16, 12000);
   }).then(function (r) {
-    var ok = r.value === -1 && r.readMs !== null && r.readMs <= 10000 && r.ackMs <= 2000;
+    var ok = r.value === -1 && r.wakeMs !== null && r.wakeMs <= 10000;
     return report('5b failed read wakes worker with -1', ok, 'value=' + r.value + ', ' + timings(r));
-  }, function (e) { return report('5 range read', false, String(e)); });
+  }, function (e) { return report('5b failed read wakes worker with -1', false, String(e)); });
 }
 
 // Loads the th08-web runtime without game data: proves the runtime and its pthread pool
@@ -165,25 +171,43 @@ function checkRuntime() {
 
 function checkAudio() {
   return new Promise(function (resolve) {
-    var prompt = document.getElementById('prompt');
-    prompt.hidden = false;
-    function onKey(e) { if (e.keyCode === 13) go(); }
-    function go() {
+    var prompt = document.getElementById('prompt'), done = false;
+    var waitTimer = setTimeout(function () { finish(false, 'không có ai bấm OK trong 120 s'); }, 120000);
+    function stopListening() {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('click', go);
-      prompt.hidden = true;
-      var Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return resolve(report('6 audio', false, 'no AudioContext'));
-      var ctx = new Ctx();
-      withTimeout(ctx.resume(), 3000, 'AudioContext.resume').then(function () {
-        var osc = ctx.createOscillator();
-        osc.frequency.value = 880;
-        osc.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.3);
-        resolve(report('6 audio', ctx.state === 'running', 'AudioContext.state=' + ctx.state));
-      }, function (e) { resolve(report('6 audio', false, 'resume failed: ' + e)); });
     }
+    function finish(ok, detail) {
+      if (done) return;
+      done = true;
+      clearTimeout(waitTimer);
+      stopListening();
+      prompt.hidden = true;
+      resolve(report('6 audio', ok, detail));
+    }
+    function onKey(e) { if (e.keyCode === 13) go(); }
+    // Runs inside the key/click handler: that user gesture is what unlocks audio.
+    function go() {
+      stopListening();
+      clearTimeout(waitTimer);
+      try {
+        var Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return finish(false, 'no AudioContext');
+        var ctx = new Ctx();
+        var resumed = Promise.resolve(ctx.resume ? ctx.resume() : undefined);
+        withTimeout(resumed, 3000, 'AudioContext.resume').then(function () {
+          try {
+            var osc = ctx.createOscillator();
+            osc.frequency.value = 880;
+            osc.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.3);
+            finish(ctx.state === 'running', 'AudioContext.state=' + ctx.state);
+          } catch (e) { finish(false, 'beep failed: ' + e); }
+        }, function (e) { finish(false, 'resume failed: ' + e); });
+      } catch (e) { finish(false, 'audio setup failed: ' + e); }
+    }
+    prompt.hidden = false;
     window.addEventListener('keydown', onKey);
     window.addEventListener('click', go);
   });
