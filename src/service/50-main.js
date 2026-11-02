@@ -1,3 +1,19 @@
+var opening = false;
+
+function openSpike() {
+  if (opening) return;
+  opening = true;
+  status.openError = null;
+  log('opening ' + status.launcherUrl);
+  openWithDevtools(status.launcherUrl).then(function () {
+    status.openMethod = 'devtools';
+    log('opened with DevTools');
+  }, function (e) {
+    status.openError = e.message;
+    log('open failed: ' + e.message);
+  }).then(function () { opening = false; });
+}
+
 server.on('error', function (e) {
   status.state = 'error';
   status.error = 'port ' + PORT + ': ' + e.message;
@@ -6,6 +22,7 @@ server.on('error', function (e) {
 server.listen(PORT, '127.0.0.1', function () {
   Promise.resolve().then(install).then(function () {
     status.state = 'ready';
+    openHandler = openSpike;
     log('ready');
   }, function (e) {
     status.state = 'error';
