@@ -63,12 +63,14 @@ function serveFile(req, res, name) {
   });
 }
 
-// A read error after the headers went out can only cut the response short.
+// A read error after the headers went out can only cut the response short; a client that
+// goes away early must not leave the file open.
 function pipeFile(stream, res) {
   stream.on('error', function (e) {
     log('read error: ' + e.message);
     res.destroy();
   });
+  res.on('close', function () { stream.destroy(); });
   stream.pipe(res);
 }
 
