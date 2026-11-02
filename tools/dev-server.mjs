@@ -9,11 +9,17 @@ const [dir, port] = [process.argv[2], Number(process.argv[3])];
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.wasm': 'application/wasm' };
 
 createServer(async (req, res) => {
-  const rel = normalize(decodeURIComponent(req.url.split('?')[0])).replace(/^(\.\.[/\\])+/, '');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  let rel;
+  try {
+    rel = normalize(decodeURIComponent(req.url.split('?')[0])).replace(/^(\.\.[/\\])+/, '');
+  } catch {
+    res.writeHead(400);
+    res.end('bad request');
+    return;
+  }
   try {
     const body = await readFile(join(dir, rel));
     res.writeHead(200, { 'Content-Type': TYPES[extname(rel)] || 'application/octet-stream' });
