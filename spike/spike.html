@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>TH08 — kiểm tra TV</title>
+<style>
+  body { margin: 0; padding: 40px; background: #0b0c14; color: #eee; font: 26px sans-serif; }
+  h1 { font-size: 36px; margin: 0 0 24px; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 8px 16px; border-bottom: 1px solid #333; vertical-align: top; }
+  tr.ok td:nth-child(2) { color: #7f7; }
+  tr.fail td:nth-child(2) { color: #f77; }
+  #prompt { margin: 24px 0; padding: 16px; background: #335; font-size: 32px; }
+  #canvas { display: none; }
+</style>
+</head>
+<body>
+<h1>TH08 — kiểm tra khả năng TV (mốc 0)</h1>
+<table><tbody id="rows"></tbody></table>
+<div id="prompt" hidden>Bấm OK trên remote (hoặc Enter) để thử âm thanh</div>
+<canvas id="canvas" width="640" height="480"></canvas>
+<script src="remote-file.js"></script>
+<script src="spike.js"></script>
+</body>
+</html>
