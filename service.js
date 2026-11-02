@@ -364,16 +364,35 @@ function listeningPorts() {
   return ports;
 }
 
+// GET JSON from 127.0.0.1:port. Resolves null on any failure, after 1 s overall, or past 1 MB,
+// so one odd listening port cannot stall or crash the DevTools search.
 function getJson(port, pathname) {
   return new Promise(function (resolve) {
-    var req = http.get({ host: '127.0.0.1', port: port, path: pathname }, function (res) {
+    var settled = false, req, timer;
+    function settle(value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      req.abort();
+      resolve(value);
+    }
+    req = http.get({ host: '127.0.0.1', port: port, path: pathname }, function (res) {
       var text = '';
       res.setEncoding('utf8');
-      res.on('data', function (c) { text += c; });
-      res.on('end', function () { try { resolve(JSON.parse(text)); } catch (e) { resolve(null); } });
+      res.on('data', function (c) {
+        text += c;
+        if (text.length > 1048576) settle(null);
+      });
+      res.on('end', function () {
+        var value = null;
+        try { value = JSON.parse(text); } catch (e) { value = null; }
+        settle(value);
+      });
+      res.on('error', function () { settle(null); });
+      res.on('aborted', function () { settle(null); });
     });
-    req.setTimeout(1000, function () { req.abort(); resolve(null); });
-    req.on('error', function () { resolve(null); });
+    timer = setTimeout(function () { settle(null); }, 1000);
+    req.on('error', function () { settle(null); });
   });
 }
 
@@ -438,7 +457,7 @@ function cdpCall(wsUrl, method, params) {
           if (opcode === 0x8) return settle(new Error('DevTools closed the connection'));
           if (opcode !== 0x1) continue;
           var msg;
-          try { msg = JSON.parse(data.toString('utf8')); } catch (e) { return settle(e); }
+          try { msg = JSON.parse(data.toString('utf8')); } catch (e) { continue; }
           if (msg.id === 1) return settle(null, msg);
         }
       }

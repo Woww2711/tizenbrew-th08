@@ -59,11 +59,13 @@ async function openWith(mode, servicePort, devtoolsPort, pageUrl) {
   preinstall(dataDir);
   const svc = loadService({ TH08_DATA_DIR: dataDir, TH08_PORT: String(servicePort),
     TH08_DEVTOOLS_PORTS: String(devtoolsPort), TH08_CDP_TIMEOUT_MS: '300' });
-  await waitFor(() => svc.status.state === 'ready');
-  const res = await fetch(`http://127.0.0.1:${servicePort}/open`, { method: 'POST' });
-  assert.equal(res.status, 202);
-  await waitFor(() => svc.status.openMethod === 'devtools' || svc.status.openError);
-  return { svc, dt, stop: () => { svc.onStop(); dt.server.close(); } };
+  try {
+    await waitFor(() => svc.status.state === 'ready');
+    const res = await fetch(`http://127.0.0.1:${servicePort}/open`, { method: 'POST' });
+    assert.equal(res.status, 202);
+    await waitFor(() => svc.status.openMethod === 'devtools' || svc.status.openError);
+    return { svc, dt, stop: () => { svc.onStop(); dt.server.close(); } };
+  } catch (e) { svc.onStop(); dt.server.close(); throw e; }
 }
 
 test('POST /open navigates the module page to the launcher url via DevTools', async () => {
@@ -108,4 +110,37 @@ test('POST /open before the spike is installed answers 409', async () => {
     const res = await fetch('http://127.0.0.1:18806/open', { method: 'POST' });
     assert.equal(res.status, 409);
   } finally { svc.onStop(); }
+});
+
+test('a slow or broken port does not stall the DevTools search', async () => {
+  const slow = http.createServer((req, res) => {
+    res.writeHead(200);
+    const iv = setInterval(() => res.write('['), 100);
+    res.on('close', () => clearInterval(iv));
+    slow.ivs.push(iv);
+  });
+  slow.ivs = [];
+  const broken = http.createServer((req) => { req.socket.destroy(); });
+  await new Promise((r) => slow.listen(18896, '127.0.0.1', r));
+  await new Promise((r) => broken.listen(18897, '127.0.0.1', r));
+  const dt = fakeDevtools(18898, MODULE_PAGE, 'ok');
+  await dt.listen();
+  const dataDir = tempDir();
+  preinstall(dataDir);
+  const svc = loadService({ TH08_DATA_DIR: dataDir, TH08_PORT: '18807',
+    TH08_DEVTOOLS_PORTS: '18896,18897,18898', TH08_CDP_TIMEOUT_MS: '300' });
+  try {
+    await waitFor(() => svc.status.state === 'ready');
+    const res = await fetch('http://127.0.0.1:18807/open', { method: 'POST' });
+    assert.equal(res.status, 202);
+    await waitFor(() => svc.status.openMethod === 'devtools' || svc.status.openError, 5000);
+    assert.equal(svc.status.openMethod, 'devtools');
+    assert.equal(svc.status.openError, null);
+  } finally {
+    svc.onStop();
+    dt.server.close();
+    slow.ivs.forEach(clearInterval);
+    slow.close();
+    broken.close();
+  }
 });
