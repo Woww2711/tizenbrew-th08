@@ -24,6 +24,7 @@ test.before(async () => {
     const name = req.url.replace('/spike/', '');
     if (ASSETS.includes(name)) { res.writeHead(200); return res.end('asset ' + name); }
     if (req.url.indexOf('/empty/') === 0) { res.writeHead(200); return res.end(); }
+    if (req.url.indexOf('/short/') === 0) { res.writeHead(200, { 'Content-Length': 100 }); res.write('0123456789'); return setTimeout(() => res.destroy(), 20); }
     res.writeHead(404); res.end();
   });
   await new Promise((r) => fixture.listen(18799, '127.0.0.1', r));
@@ -59,8 +60,7 @@ test('installs build files, spike pages, synthetic file and version marker', asy
 test('a missing file makes the service reinstall everything', async () => {
   const dataDir = tempDir();
   let svc = loadService(envFor(dataDir, 18788));
-  await waitFor(() => svc.status.state === 'ready');
-  svc.onStop();
+  try { await waitFor(() => svc.status.state === 'ready'); } finally { svc.onStop(); }
   const dir = path.join(dataDir, 'th08', 'spike');
   fs.unlinkSync(path.join(dir, 'worker.js'));
   fs.writeFileSync(path.join(dir, 'spike.js'), 'stale');
@@ -80,6 +80,16 @@ test('an empty asset download fails the install instead of marking it complete',
   try {
     await waitFor(() => svc.status.state === 'error');
     assert.match(svc.status.error, /empty download: http:\/\/127\.0\.0\.1:18799\/empty\/spike\.html/);
+    assert.ok(!fs.existsSync(path.join(dataDir, 'th08', 'spike', '.complete')));
+  } finally { svc.onStop(); }
+});
+
+test('a download cut short fails the install instead of marking it complete', async () => {
+  const dataDir = tempDir();
+  const svc = loadService(envFor(dataDir, 18785, { TH08_ASSET_BASE: 'http://127.0.0.1:18799/short/' }));
+  try {
+    await waitFor(() => svc.status.state === 'error');
+    assert.match(svc.status.error, /cut short|got 10 of 100|aborted|socket hang up/);
     assert.ok(!fs.existsSync(path.join(dataDir, 'th08', 'spike', '.complete')));
   } finally { svc.onStop(); }
 });
