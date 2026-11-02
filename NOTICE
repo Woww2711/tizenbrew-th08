@@ -1,0 +1,5 @@
+This module downloads, at run time, the th08-web build v0.1.0
+(https://github.com/N0zoM1z0/th08-web, MIT License) onto the TV. It does not
+redistribute that build, and it never contains or downloads Touhou game data:
+th08.dat and thbgm.dat come only from the user's own legal copy.
+Touhou Project and Imperishable Night are works of Team Shanghai Alice (ZUN).

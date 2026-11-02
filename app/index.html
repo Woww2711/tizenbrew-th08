@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>TH08</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0c14; color: #eee; font: 32px sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; }
+  #err { color: #f88; max-width: 80%; text-align: center; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="msg">Đang chờ service…</div>
+<div id="err"></div>
+<script>
+  // The service installs the spike into TizenBrew's data directory; the spike must run
+  // from file:// (only those pages get SharedArrayBuffer on the TV), and this http page
+  // cannot navigate there itself, so it asks the service to open it through DevTools.
+  var SERVICE = 'http://127.0.0.1:8790';
+  var asked = false;
+  function show(id, text) { document.getElementById(id).textContent = text; }
+  function poll() {
+    fetch(SERVICE + '/status').then(function (r) { return r.json(); }).then(function (s) {
+      if (s.state === 'error') return show('err', 'Lỗi: ' + s.error);
+      if (s.state !== 'ready') {
+        show('msg', 'Đang chuẩn bị (chỉ lần đầu): ' + (s.progress || s.state));
+        return setTimeout(poll, 500);
+      }
+      if (!asked) {
+        asked = true;
+        show('msg', 'Đang mở trang kiểm tra…');
+        fetch(SERVICE + '/open', { method: 'POST' }).catch(function () {});
+      } else if (s.openError) {
+        return show('err', 'Không mở được: ' + s.openError + '\nBấm Back rồi mở lại module.');
+      }
+      setTimeout(poll, 1000);
+    }).catch(function () { show('msg', 'Đang chờ service…'); setTimeout(poll, 1000); });
+  }
+  window.addEventListener('keydown', function (e) { if (e.keyCode === 10009) history.back(); });
+  poll();
+</script>
+</body>
+</html>
