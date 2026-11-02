@@ -5,9 +5,18 @@
 (function (root) {
   'use strict';
 
+  // Index rules of File.slice: negative counts from the end, NaN is 0, then clamp to [0, size].
+  function clampIndex(value, size, fallback) {
+    if (value === undefined) return fallback;
+    var n = Math.floor(Number(value));
+    if (n !== n) return 0;
+    return n < 0 ? Math.max(size + n, 0) : Math.min(n, size);
+  }
+
   function request(url, headers, checkResponse) {
     var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
     var timer;
+    // Without AbortController the timeout still rejects, but the connection stays open.
     var work = fetch(url, { headers: headers, signal: ctrl ? ctrl.signal : undefined }).then(function (res) {
       var problem = checkResponse(res);
       if (problem) {
@@ -55,11 +64,11 @@
     });
   };
 
-  // Bytes [start, end), clamped to the file like File.slice.
+  // Bytes [start, end), with the index rules of File.slice (negative counts from the end, NaN is 0, clamped).
   RemoteFile.prototype.slice = function (start, end) {
     var self = this;
-    var a = Math.max(0, Math.floor(start || 0));
-    var b = Math.min(end === undefined ? self.size : Math.floor(end), self.size);
+    var a = clampIndex(start, self.size, 0);
+    var b = clampIndex(end, self.size, self.size);
     return {
       arrayBuffer: function () {
         if (a >= b) return Promise.resolve(new ArrayBuffer(0));
@@ -79,4 +88,4 @@
 
   if (typeof module === 'object' && module.exports) module.exports = RemoteFile;
   else root.RemoteFile = RemoteFile;
-})(this);
+})(typeof self !== 'undefined' ? self : this);
