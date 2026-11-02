@@ -1,0 +1,15 @@
+{
+  "name": "tizenbrew-th08",
+  "version": "0.0.1",
+  "description": "TizenBrew app module that runs th08-web (Touhou 8, WebAssembly) on Samsung Tizen TVs.",
+  "license": "MIT",
+  "packageType": "app",
+  "appName": "Touhou 8 (TH08 Web)",
+  "appPath": "app/index.html",
+  "serviceFile": "service.js",
+  "keys": [],
+  "scripts": {
+    "build": "node tools/build-service.mjs",
+    "test": "node tools/build-service.mjs && node --test \"test/*.test.js\""
+  }
+}
