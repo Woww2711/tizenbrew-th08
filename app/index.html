@@ -17,22 +17,47 @@
   // from file:// (only those pages get SharedArrayBuffer on the TV), and this http page
   // cannot navigate there itself, so it asks the service to open it through DevTools.
   var SERVICE = 'http://127.0.0.1:8790';
-  var asked = false;
+  var asked = 0;   // POST /open attempts
   function show(id, text) { document.getElementById(id).textContent = text; }
+  function fail(text) { show('msg', ''); show('err', text); }
+  // Request + JSON body within `ms`, so a hung service cannot stop the page.
+  function request(url, init, ms) {
+    var ctrl = typeof AbortController === 'function' ? new AbortController() : null, timer;
+    init = init || {};
+    if (ctrl) init.signal = ctrl.signal;
+    var work = fetch(url, init).then(function (r) {
+      return r.json().then(function (body) { return { status: r.status, body: body }; });
+    });
+    work.catch(function () {});
+    var timeout = new Promise(function (resolve, reject) {
+      timer = setTimeout(function () {
+        if (ctrl) ctrl.abort();
+        reject(new Error('no answer after ' + ms + ' ms'));
+      }, ms);
+    });
+    return Promise.race([work, timeout]).then(function (v) { clearTimeout(timer); return v; },
+      function (e) { clearTimeout(timer); throw e; });
+  }
+  function askOpen() {
+    asked++;
+    show('msg', 'Đang mở trang kiểm tra…');
+    request(SERVICE + '/open', { method: 'POST' }, 5000).then(function (r) {
+      if (r.status !== 202) throw new Error('HTTP ' + r.status + ': ' + (r.body && r.body.error));
+    }).catch(function (e) {
+      if (asked < 3) return setTimeout(askOpen, 2000);
+      fail('Không gửi được yêu cầu mở: ' + e.message + '\nBấm Back rồi mở lại module.');
+    });
+  }
   function poll() {
-    fetch(SERVICE + '/status').then(function (r) { return r.json(); }).then(function (s) {
-      if (s.state === 'error') return show('err', 'Lỗi: ' + s.error);
+    request(SERVICE + '/status', {}, 5000).then(function (r) {
+      var s = r.body;
+      if (s.state === 'error') return fail('Lỗi: ' + s.error);
       if (s.state !== 'ready') {
         show('msg', 'Đang chuẩn bị (chỉ lần đầu): ' + (s.progress || s.state));
         return setTimeout(poll, 500);
       }
-      if (!asked) {
-        asked = true;
-        show('msg', 'Đang mở trang kiểm tra…');
-        fetch(SERVICE + '/open', { method: 'POST' }).catch(function () {});
-      } else if (s.openError) {
-        return show('err', 'Không mở được: ' + s.openError + '\nBấm Back rồi mở lại module.');
-      }
+      if (!asked) askOpen();
+      else if (s.openError) return fail('Không mở được: ' + s.openError + '\nBấm Back rồi mở lại module.');
       setTimeout(poll, 1000);
     }).catch(function () { show('msg', 'Đang chờ service…'); setTimeout(poll, 1000); });
   }
