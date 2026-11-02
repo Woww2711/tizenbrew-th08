@@ -20,6 +20,8 @@ let fixture;
 test.before(async () => {
   fixture = http.createServer((req, res) => {
     if (req.url === '/redirect') { res.writeHead(302, { Location: '/build.tar.gz' }); return res.end(); }
+    if (req.url === '/broken302') { res.writeHead(302, { Location: '/build.tar.gz', 'Content-Length': 100 }); res.write('xxxxx'); return setTimeout(() => res.destroy(), 20); }
+    if (req.url === '/broken404') { res.writeHead(404, { 'Content-Length': 100 }); res.write('xxxxx'); return setTimeout(() => res.destroy(), 20); }
     if (req.url === '/build.tar.gz') { res.writeHead(200); return res.end(BUILD); }
     const name = req.url.replace('/spike/', '');
     if (ASSETS.includes(name)) { res.writeHead(200); return res.end('asset ' + name); }
@@ -91,6 +93,23 @@ test('a download cut short fails the install instead of marking it complete', as
     await waitFor(() => svc.status.state === 'error');
     assert.match(svc.status.error, /cut short|got 10 of 100|aborted|socket hang up/);
     assert.ok(!fs.existsSync(path.join(dataDir, 'th08', 'spike', '.complete')));
+  } finally { svc.onStop(); }
+});
+
+test('a redirect whose body is cut still follows the redirect', async () => {
+  const svc = loadService(envFor(tempDir(), 18810, { TH08_BUILD_URL: 'http://127.0.0.1:18799/broken302' }));
+  try {
+    await waitFor(() => svc.status.state === 'ready');
+  } finally { svc.onStop(); }
+});
+
+test('an error response that is cut fails cleanly and the service keeps answering', async () => {
+  const svc = loadService(envFor(tempDir(), 18811, { TH08_BUILD_URL: 'http://127.0.0.1:18799/broken404' }));
+  try {
+    await waitFor(() => svc.status.state === 'error');
+    assert.match(svc.status.error, /HTTP 404/);
+    const r = await fetch('http://127.0.0.1:18811/status');
+    assert.strictEqual(r.status, 200);
   } finally { svc.onStop(); }
 });
 

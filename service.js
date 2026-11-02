@@ -167,7 +167,7 @@ function handle(req, res) {
   }
   if (req.method === 'POST' && url === '/open') {
     if (!openHandler) return sendJson(res, 409, { error: 'not ready' });
-    openHandler();
+    try { openHandler(); } catch (e) { return sendJson(res, 500, { error: e.message }); }
     return sendJson(res, 202, { opening: true });
   }
   if (req.method === 'GET' && url.indexOf('/file/') === 0) {
@@ -202,16 +202,18 @@ function download(url, redirects) {
     var opts = urlLib.parse(url);
     opts.headers = { 'User-Agent': 'tizenbrew-th08' };
     req = (opts.protocol === 'https:' ? https : http).get(opts, function (res) {
+      res.on('error', function (e) { settle(e); });
+      res.on('aborted', function () { settle(new Error('connection cut short: ' + url)); });
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        if (redirects >= 5) return settle(new Error('too many redirects: ' + url));
+        if (redirects >= 5) { settle(new Error('too many redirects: ' + url)); res.destroy(); return; }
         settled = true;
         clearTimeout(timer);
+        res.destroy(); // the body is not needed
         return resolve(download(urlLib.resolve(url, res.headers.location), redirects + 1));
       }
       if (res.statusCode !== 200) {
-        res.resume();
-        return settle(new Error('HTTP ' + res.statusCode + ' for ' + url));
+        settle(new Error('HTTP ' + res.statusCode + ' for ' + url));
+        return res.destroy(); // the body is not needed
       }
       var chunks = [], got = 0, want = res.headers['content-length'];
       res.on('data', function (c) { chunks.push(c); got += c.length; });
@@ -221,8 +223,6 @@ function download(url, redirects) {
         }
         settle(null, Buffer.concat(chunks));
       });
-      res.on('aborted', function () { settle(new Error('connection cut short: ' + url)); });
-      res.on('error', function (e) { settle(e); });
     });
     timer = setTimeout(function () {
       settle(new Error('download took longer than ' + DOWNLOAD_TIMEOUT_MS / 1000 + ' s: ' + url));
@@ -488,7 +488,7 @@ function openSpike() {
   opening = true;
   status.openError = null;
   log('opening ' + status.launcherUrl);
-  openWithDevtools(status.launcherUrl).then(function () {
+  Promise.resolve().then(function () { return openWithDevtools(status.launcherUrl); }).then(function () {
     status.openMethod = 'devtools';
     log('opened with DevTools');
   }, function (e) {

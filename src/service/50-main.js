@@ -5,7 +5,7 @@ function openSpike() {
   opening = true;
   status.openError = null;
   log('opening ' + status.launcherUrl);
-  openWithDevtools(status.launcherUrl).then(function () {
+  Promise.resolve().then(function () { return openWithDevtools(status.launcherUrl); }).then(function () {
     status.openMethod = 'devtools';
     log('opened with DevTools');
   }, function (e) {

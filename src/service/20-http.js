@@ -95,7 +95,7 @@ function handle(req, res) {
   }
   if (req.method === 'POST' && url === '/open') {
     if (!openHandler) return sendJson(res, 409, { error: 'not ready' });
-    openHandler();
+    try { openHandler(); } catch (e) { return sendJson(res, 500, { error: e.message }); }
     return sendJson(res, 202, { opening: true });
   }
   if (req.method === 'GET' && url.indexOf('/file/') === 0) {
