@@ -96,8 +96,29 @@ function loadRuntime() {
   });
 }
 
-function readRecord(FS) {
-  try { return JSON.parse(FS.readFile(PROBE_FILE, { encoding: 'utf8' })); } catch (e) { return null; }
+function isCount(n) { return typeof n === 'number' && isFinite(n) && n >= 1 && Math.floor(n) === n; }
+
+// Reads and validates the probe record: { record } | { missing: true } | { error }.
+// Only ENOENT means "no record yet"; anything else must not be mistaken for a first run.
+function readRecord(FS, file) {
+  var text, rec, i;
+  try {
+    text = FS.readFile(file, { encoding: 'utf8' });
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.errno === 44 || e.errno === 2)) return { missing: true };
+    return { error: 'đọc lỗi: ' + ((e && e.message) || e) };
+  }
+  try { rec = JSON.parse(text); } catch (e2) { return { error: 'JSON hỏng: ' + e2.message }; }
+  if (!rec || typeof rec !== 'object' || !isCount(rec.count) || typeof rec.at !== 'string' ||
+      typeof rec.version !== 'string' || !Array.isArray(rec.history)) {
+    return { error: 'bản ghi sai cấu trúc' };
+  }
+  for (i = 0; i < rec.history.length; i++) {
+    if (!rec.history[i] || typeof rec.history[i] !== 'object' || !isCount(rec.history[i].count)) {
+      return { error: 'lịch sử sai cấu trúc' };
+    }
+  }
+  return { record: rec };
 }
 
 function describe(rec) {
@@ -107,12 +128,15 @@ function describe(rec) {
 function probe(Module) {
   var t0 = Date.now(), before = null, record = null;
   return TH08Saves.prepare(Module).then(function (saves) {
-    before = readRecord(Module.FS);
-    row('Đọc save', saves.available, saves.available
-      ? (before ? 'đọc được ' + describe(before) : 'chưa có bản ghi (lần mở đầu tiên, hoặc dữ liệu đã mất)') +
-        ' · ' + (Date.now() - t0) + ' ms'
-      : 'IndexedDB không dùng được: ' + saves.error, { saves: saves, record: before });
+    var read = saves.available ? readRecord(Module.FS, PROBE_FILE) : { missing: true };
+    before = read.record || null;
+    row('Đọc save', saves.available && !read.error, !saves.available
+      ? 'IndexedDB không dùng được: ' + saves.error
+      : read.error ? 'bản ghi ' + PROBE_FILE + ' không đọc được, KHÔNG ghi đè: ' + read.error
+      : (before ? 'đọc được ' + describe(before) : 'chưa có bản ghi (lần mở đầu tiên, hoặc dữ liệu đã mất)') +
+        ' · ' + (Date.now() - t0) + ' ms', { saves: saves, record: before, error: read.error || null });
     if (!saves.available) throw new Error('no persistent storage: ' + saves.error);
+    if (read.error) throw new Error('unreadable probe record: ' + read.error);
     var entry = { count: (before ? before.count : 0) + 1, at: new Date().toISOString(), version: PAGE_VERSION,
       serviceStartedAt: service ? service.startedAt : null };
     var history = (before && before.history ? before.history.slice(-9) : []).concat([entry]);
@@ -149,7 +173,10 @@ function run() {
   }, function (e) {
     row('Runtime th08-web', false, e.message);
     show('summary', 'Runtime không nạp được: ' + e.message);
+  }).catch(function (e) {
+    show('summary', 'Lỗi không mong đợi: ' + ((e && e.message) || e));
   });
 }
 
-run();
+if (typeof module !== 'undefined' && module.exports) module.exports = { readRecord: readRecord };
+else run();
