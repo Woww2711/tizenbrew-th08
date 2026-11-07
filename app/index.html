@@ -40,7 +40,13 @@
     return Promise.race([work, timeout]).then(function (v) { clearTimeout(timer); return v; },
       function (e) { clearTimeout(timer); throw e; });
   }
+  // The last /status answer; every way to open the launcher checks it (a stale service must not open anything).
+  var lastStatus = null;
+  function canOpen() {
+    return !!lastStatus && lastStatus.version === PAGE_VERSION && lastStatus.state === 'ready';
+  }
   function askOpen() {
+    if (!canOpen()) return;
     asked++;
     show('msg', 'Đang mở trang thử…');
     request(SERVICE + '/open', { method: 'POST' }, 5000).then(function (r) {
@@ -57,12 +63,13 @@
     (s.reports || []).forEach(function (r) {
       if (r.source === 'service' && r.version === PAGE_VERSION) note = 'Service ' + PAGE_VERSION + ' báo: ' + r.message;
     });
-    fail('Service đang chạy là bản ' + s.version + ', trang này là bản ' + PAGE_VERSION + '.\n' + note +
+    fail('Service đang chạy là bản ' + (s.version || '?') + ', trang này là bản ' + PAGE_VERSION + '.\n' + note +
       '\nRút điện TV 1 phút rồi mở lại module.');
   }
   function poll() {
     request(SERVICE + '/status', {}, 5000).then(function (r) {
       var s = r.body;
+      lastStatus = s;
       if (s.version !== PAGE_VERSION) { stale(s); return setTimeout(poll, 3000); }
       show('err', '');
       if (s.state === 'error') return fail('Lỗi: ' + s.error);
@@ -74,7 +81,7 @@
       else if (!asked) askOpen();
       else if (s.openError) return fail('Không mở được: ' + s.openError + '\nBấm Back rồi mở lại module.');
       setTimeout(poll, 1000);
-    }).catch(function () { show('msg', 'Đang chờ service…'); setTimeout(poll, 1000); });
+    }).catch(function () { lastStatus = null; show('msg', 'Đang chờ service…'); setTimeout(poll, 1000); });
   }
   function cameBack() {
     var nav = performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;
@@ -82,7 +89,7 @@
   }
   window.addEventListener('keydown', function (e) {
     if (e.keyCode === 10009) history.back();
-    if (e.keyCode === 13 && waitOk) { waitOk = false; askOpen(); }
+    if (e.keyCode === 13 && waitOk && canOpen()) { waitOk = false; askOpen(); }
   });
   // Restored from the back/forward cache: the old poll loop keeps running.
   window.addEventListener('pageshow', function (e) { if (e.persisted) { waitOk = true; asked = 0; } });
