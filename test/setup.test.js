@@ -71,7 +71,9 @@ test('bad input answers 400 and starts nothing; a setup before the build is read
   fs.rmSync(path.join(broken.root, 'build'), { recursive: true });
   try {
     await waitFor(() => broken.svc.status.state === 'error');
-    assert.equal((await postSetup(broken.base, { ip: '127.0.0.1', port: 18851, token: TOKEN })).status, 409);
+    const res = await postSetup(broken.base, { ip: '127.0.0.1', port: 18851, token: TOKEN });
+    assert.equal(res.status, 409);
+    assert.equal((await res.json()).code, 'not-ready');
   } finally { broken.svc.onStop(); }
 });
 
@@ -83,7 +85,9 @@ test('a second POST /setup while one runs answers 409', async () => {
     assert.equal((await postSetup(t.base, { ip: '127.0.0.1', port: 18851, token: TOKEN })).status, 202);
     const again = await postSetup(t.base, { ip: '127.0.0.1', port: 18851, token: TOKEN });
     assert.equal(again.status, 409);
-    assert.match((await again.json()).error, /already running/);
+    const body = await again.json();
+    assert.equal(body.code, 'running');
+    assert.match(body.error, /already running/);
   } finally { t.svc.onStop(); await pc.close(); }
 });
 
@@ -245,4 +249,35 @@ test('a stop mid-download cancels the copy; the next service starts from a clean
     assert.ok(!fs.existsSync(path.join(t.root, 'staging')), 'staging removed at start');
     assert.deepEqual([next.status.ready, next.status.dataReady], [false, false]);
   } finally { t.svc.onStop(); if (next) next.onStop(); await pc.close(); }
+});
+
+test('a staging cleanup that throws still ends the setup with the original error and frees the slot', async () => {
+  const unhandled = [];
+  const onUnhandled = (e) => unhandled.push(e);
+  process.on('unhandledRejection', onUnhandled);
+  const realFs = require('node:fs');
+  const flag = { fail: false };
+  const boom = () => { throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' }); };
+  const fakeFs = Object.assign({}, realFs, {
+    unlinkSync: (p) => (flag.fail ? boom() : realFs.unlinkSync(p)),
+    rmdirSync: (p) => (flag.fail ? boom() : realFs.rmdirSync(p)) });
+  const globals = { require: (name) => (name === 'fs' ? fakeFs : require(name)) };
+  const t = start(18867, { globals });
+  try {
+    await waitFor(() => t.svc.status.state === 'ready');
+    fs.mkdirSync(path.join(t.root, 'staging'), { recursive: true });
+    fs.writeFileSync(path.join(t.root, 'staging', 'junk'), 'x');
+    flag.fail = true;
+    // No server at this port: the manifest fails, then the cleanup throws.
+    assert.equal((await postSetup(t.base, { ip: '127.0.0.1', port: 18868, token: TOKEN })).status, 202);
+    await waitFor(() => t.svc.status.setup.state !== 'running', 10000);
+    assert.equal(t.svc.status.setup.state, 'error');
+    assert.notEqual(t.svc.status.setup.error.code, 'EIO', 'the original error is kept');
+    assert.ok(t.svc.status.setup.finishedAt);
+    flag.fail = false;
+    const again = await postSetup(t.base, { ip: '127.0.0.1', port: 18868, token: TOKEN });
+    assert.equal(again.status, 202, 'the slot is free again');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.deepEqual(unhandled, []);
+  } finally { process.removeListener('unhandledRejection', onUnhandled); t.svc.onStop(); }
 });

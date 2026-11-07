@@ -104,12 +104,18 @@ function runSetup(input) {
       s.state = 'cancelled';
       return;
     }
-    removeTree(path.join(dataRoot, 'staging'));
     s.state = 'error';
     s.error = { code: e.code || 'error', message: e.message, need: e.need, free: e.free };
     log('setup failed: ' + e.message);
+    try { removeTree(path.join(dataRoot, 'staging')); }
+    catch (e2) { log('setup cleanup failed: ' + e2.message); }
   }).then(function () {
     s.finishedAt = new Date().toISOString();
+    if (setupJob === job) setupJob = null;
+  }).catch(function (e) {
+    // Last resort: nothing in the chain may stay unhandled or leave the copy stuck.
+    log('setup bookkeeping failed: ' + e.message);
+    if (s.state === 'running') s.state = 'error';
     if (setupJob === job) setupJob = null;
   });
 }
