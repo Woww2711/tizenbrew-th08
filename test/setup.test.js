@@ -132,7 +132,9 @@ test('not enough free space fails before any download and reports the numbers', 
     const s = await setupTo(t, 18854);
     assert.deepEqual([s.state, s.phase, s.error.code], ['error', 'space', 'space']);
     assert.equal(s.error.need, 4096 + 1048576 + 1e15);
-    assert.equal(s.error.free, fs.statfsSync(t.root).bavail * fs.statfsSync(t.root).bsize);
+    // Other test files write to the same disk meanwhile: the free space only matches roughly.
+    const free = fs.statfsSync(t.root).bavail * fs.statfsSync(t.root).bsize;
+    assert.ok(Math.abs(s.error.free - free) < 64 * 1048576, s.error.free + ' vs ' + free);
     assert.match(s.error.message, /^not enough free space: need \d+ MiB, free \d+ MiB$/);
     assert.deepEqual(pc.seen, ['GET /manifest.json']);
   } finally { t.svc.onStop(); await pc.close(); }

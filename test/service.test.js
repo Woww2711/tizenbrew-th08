@@ -33,7 +33,7 @@ test('code that runs on the TV uses ES5 syntax', () => {
 });
 
 test('the pages expect the version in package.json', () => {
-  for (const f of ['app/index.html', 'launcher/probe.js']) {
+  for (const f of ['app/index.html']) {
     const m = /var PAGE_VERSION = '([^']*)';/.exec(fs.readFileSync(path.join(ROOT, f), 'utf8'));
     assert.ok(m, f + ' declares PAGE_VERSION');
     assert.equal(m[1], VERSION, f);

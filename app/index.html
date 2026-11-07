@@ -33,7 +33,7 @@
   // The service installs the launcher into TizenBrew's data directory; it must run from
   // file:// (only those pages get SharedArrayBuffer on the TV), and this http page cannot
   // navigate there itself, so it asks the service to open it through DevTools.
-  var PAGE_VERSION = '0.0.3';
+  var PAGE_VERSION = '0.0.4';
   var SERVICE = 'http://127.0.0.1:8790';
   var asked = 0;        // POST /open attempts
   var waitOk = false;   // came back from the launcher: open it again only on OK
