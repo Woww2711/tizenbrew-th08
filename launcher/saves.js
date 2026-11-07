@@ -131,9 +131,10 @@ var TH08Saves = (function () {
   // have another time or were touched since the last flush are put, entries gone are deleted.
   // All or nothing: any failing request, or an exception while queueing, aborts the whole
   // transaction, so the mount keeps its previous generation.
-  function persist(IDBFS, snap, touched, cb) {
+  function persist(IDBFS, snap, touched, cb, live) {
     IDBFS.getRemoteSet(snap.mount, function (err, remote) {
       if (err) return cb(err);
+      if (live && !live()) return;                  // the flush was cancelled (locked): no new transaction
       var put = Object.keys(snap.entries).filter(function (p) {
         var r = remote.entries[p];
         return !r || touched[p] || r.timestamp.getTime() !== snap.entries[p].timestamp.getTime();
@@ -174,7 +175,7 @@ var TH08Saves = (function () {
     var t = { state: 'idle', dirty: false, openWriters: 0, locked: false, savedAt: null, lastMs: null,
       error: null, flushes: 0, cfgPtr: 0, cfgWrites: 0 };
     var timer = null, chain = Promise.resolve(), mirroring = false;
-    var touched = {}, openPaths = {};
+    var touched = {}, openPaths = {}, writers = [];
 
     function view() {
       return { state: t.state, dirty: t.dirty, openWriters: t.openWriters, locked: t.locked, savedAt: t.savedAt,
@@ -217,11 +218,13 @@ var TH08Saves = (function () {
       t.dirty = false;
       t.state = 'saving';
       emit();
-      var t0 = Date.now();
+      var t0 = Date.now(), cancelled = false;
+      function live() { return !cancelled && !t.locked; }
       return deadline(function (cb) {
         (function next(i) {
+          if (!live()) return;
           if (i === snaps.length) return cb(null);
-          persist(Module.IDBFS, snaps[i], mine, function (err) { if (err) cb(err); else next(i + 1); });
+          persist(Module.IDBFS, snaps[i], mine, function (err) { if (err) cb(err); else next(i + 1); }, live);
         })(0);
       }).then(function () {
         t.flushes++;
@@ -230,7 +233,7 @@ var TH08Saves = (function () {
         t.state = t.dirty ? 'pending' : 'saved';
         emit();
         return view();
-      }, lock);
+      }, function (e) { cancelled = true; return lock(e); });
     }
     // Queues one flush after any running one; resolves with the state after it.
     function flush() {
@@ -244,21 +247,21 @@ var TH08Saves = (function () {
     FS.open = function () {
       var stream = orig.open.apply(FS, arguments);
       if (stream && (stream.flags & 3) !== 0 && isSavePath(stream.path)) {
-        stream.th08Save = true;
-        t.openWriters++;
+        writers.push(stream);                  // by identity: a dup'd stream copy is not counted twice
+        t.openWriters = writers.length;
         openPaths[stream.path] = (openPaths[stream.path] || 0) + 1;
       }
       return stream;
     };
     orig.close = FS.close;
     FS.close = function (stream) {
-      var counted = !!(stream && stream.th08Save && !stream.th08Closed);
+      var at = stream ? writers.indexOf(stream) : -1, counted = at >= 0;
       try {
         return orig.close.apply(FS, arguments);
       } finally {
         if (counted) {
-          stream.th08Closed = true;
-          t.openWriters--;
+          writers.splice(at, 1);
+          t.openWriters = writers.length;
           openPaths[stream.path]--;
           mark([stream.path]);
         }

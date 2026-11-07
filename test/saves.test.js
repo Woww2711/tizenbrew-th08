@@ -44,15 +44,21 @@ function fakeModule(opts = {}) {
     open(p, flags) {
       let n = norm(p);
       if (nodes.has(n) && nodes.get(n).kind === 'link') n = nodes.get(n).link;
-      if (flags & 3) set(n, { kind: 'file', data: new Uint8Array(0) });          // O_TRUNC, like CREATE_ALWAYS
+      if ((flags & 3) && (flags & 512)) set(n, { kind: 'file', data: new Uint8Array(0) });          // O_TRUNC, like CREATE_ALWAYS
+      if ((flags & 3) && !nodes.has(n)) set(n, { kind: 'file', data: new Uint8Array(0) });
       calls.push(['open', n, flags]);
       return { path: n, flags };
     },
-    write(stream, buffer, offset, length) {
+    write(stream, buffer, offset, length, position) {
+      position = position || 0;
       const old = nodes.get(stream.path).data;
-      const data = new Uint8Array(old.length + length);
+      if (old.length >= position + length) {                 // like MEMFS: in place when it fits
+        old.set(buffer.subarray(offset, offset + length), position);
+        return length;
+      }
+      const data = new Uint8Array(Math.max(old.length, position + length));
       data.set(old);
-      data.set(buffer.subarray(offset, offset + length), old.length);
+      data.set(buffer.subarray(offset, offset + length), position);
       set(stream.path, { kind: 'file', data });
       return length;
     },
@@ -237,7 +243,7 @@ test('the game rewriting a file during a flush cannot tear what is stored', asyn
   const m = await tracked({ remoteDelay: 40 });
   m.FS.writeFile('/save/score.dat', new Uint8Array(100).fill(1));
   await sleep(45);                                          // flush 1 copied the tree, waits for IndexedDB
-  const s = m.FS.open('score.dat', 33345);                  // the game truncates and rewrites meanwhile
+  const s = m.FS.open('score.dat', 32833);                  // rewrites in place, no O_TRUNC, like MEMFS when the data fits
   m.FS.write(s, new Uint8Array(10).fill(2), 0, 10, 0);
   await sleep(60);
   assert.deepEqual([...stored(m, '/save', '/save/score.dat').contents.slice(0, 3)], [1, 1, 1]);
@@ -247,6 +253,31 @@ test('the game rewriting a file during a flush cannot tear what is stored', asyn
   await sleep(150);
   assert.equal(stored(m, '/save', '/save/score.dat').contents.length, 100);
   assert.equal(stored(m, '/save', '/save/score.dat').contents[0], 2, 'the new file once it is closed');
+});
+
+test('a lock stops the flush that is running: a late answer starts no transaction', async () => {
+  const m = await tracked({ remoteDelay: 30 });
+  TH08Saves.timeoutMs = 40;
+  m.FS.writeFile('/save/score.dat', new Uint8Array(4));
+  m.FS.writeFile('/game/replay/th8_01.rpy', new Uint8Array(4));
+  await sleep(200);                                         // /save answers at ~30 ms and commits; /game/replay's answer is past the deadline
+  assert.equal(m.tracker.view().state, 'locked');
+  assert.equal(m.stats.tx, 1, 'no transaction for the remaining mounts after the lock');
+  assert.equal(m.stats.committed, 1);
+  assert.ok(!m.db['/game/replay'].get('/game/replay/th8_01.rpy'));
+});
+
+test('a duplicated stream cannot make the writer count negative', async () => {
+  const m = await tracked();
+  const s = m.FS.open('score.dat', 33345);
+  const dup = Object.assign({}, s);                         // FS.dupStream copies the stream's properties
+  m.FS.close(dup);
+  m.FS.close(s);
+  assert.equal(m.tracker.view().openWriters, 0);
+  m.FS.writeFile('/save/score.txt', new Uint8Array(1));
+  const w = m.FS.open('score.dat', 33345);
+  assert.equal(m.tracker.view().openWriters, 1);
+  m.FS.close(w);
 });
 
 test('flushes never overlap: a change during a flush gets its own flush afterwards', async () => {
@@ -262,7 +293,7 @@ test('flushes never overlap: a change during a flush gets its own flush afterwar
   assert.equal(m.tracker.view().flushes, 2);
 });
 
-test('a flush that times out locks saving for the session; nothing more is written', async () => {
+test('a flush that times out locks saving for the session; no flush is started after the lock', async () => {
   const m = await tracked({ remoteDelay: Infinity });
   TH08Saves.timeoutMs = 40;
   m.FS.writeFile('/save/score.dat', new Uint8Array(4));
