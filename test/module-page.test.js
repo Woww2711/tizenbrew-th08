@@ -215,11 +215,11 @@ test('a refused POST /setup is shown and kept over the last run error', async ()
   const page = await runPage({ version: VERSION, state: 'ready', ready: false,
     setup: failed('manifest', { code: 'token', message: 'x' }) });
   page.net.setupStatus = 409;
-  page.net.setupAnswer = { error: 'a setup is already running', code: 'running' };
+  page.net.setupAnswer = { error: 'the service is not ready', code: 'not-ready' };
   page.el('token').value = '12345678';
   await page.click('start');
   await page.fire(1000);
-  assert.match(page.els.err.textContent, /^Service từ chối \(HTTP 409\): a setup is already running/);
+  assert.match(page.els.err.textContent, /^Service từ chối \(HTTP 409\): the service is not ready/);
   page.net.setupAnswer = { error: 'the game data is already set up', code: 'already-set' };
   await page.click('start');
   assert.match(page.els.err.textContent, /^Dữ liệu game đã có trên TV/);
@@ -234,4 +234,44 @@ test('when the copy is done and the service is ready, the launcher opens', async
   assert.equal(page.opens(), 1, page.requests.join(', '));
   assert.equal(page.els.setup.hidden, true);
   assert.equal(page.els.progress.textContent, '');
+});
+
+test('409 running means already copying: the form is hidden and the progress follows', async () => {
+  const page = await runPage({ version: VERSION, state: 'ready', ready: false });
+  page.net.setupStatus = 409;
+  page.net.setupAnswer = { error: 'a setup is already running', code: 'running' };
+  page.el('token').value = '12345678';
+  await page.click('start');
+  assert.equal(page.els.setup.hidden, true);
+  assert.equal(page.els.msg.textContent, 'Đang chép…');
+  assert.equal(page.els.err.textContent, '');
+});
+
+test('the run error replaces an earlier form error once a run has been seen', async () => {
+  const page = await runPage({ version: VERSION, state: 'ready', ready: false });
+  page.el('token').value = 'ab';
+  await page.click('start');
+  assert.match(page.els.err.textContent, /^Mã là dãy số/);
+  page.net.setup = running(1);
+  await page.fire(1000);
+  page.net.setup = failed('manifest', { code: 'token', message: 'x' });
+  await page.fire(1000);
+  assert.match(page.els.err.textContent, /^Sai mã: máy tính trả lỗi 403/);
+});
+
+test('a stale service gets no POST /setup and the form is hidden', async () => {
+  const page = await runPage({ version: '0.0.1', state: 'ready', ready: false });
+  assert.equal(page.els.setup.hidden, true);
+  page.el('token').value = '12345678';
+  await page.click('start');
+  assert.equal(page.setups(), 0);
+});
+
+test('stale progress is cleared when the service stops answering', async () => {
+  const page = await runPage({ version: VERSION, state: 'ready', ready: false, setup: running(1) });
+  assert.match(page.els.progress.textContent, /thbgm\.dat/);
+  page.net.statusDown = true;
+  await page.fire(1000);
+  assert.equal(page.els.progress.textContent, '');
+  assert.equal(page.els.setup.hidden, true);
 });

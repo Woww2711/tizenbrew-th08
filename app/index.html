@@ -103,10 +103,12 @@
     request(SERVICE + '/status', {}, 5000).then(function (r) {
       var s = r.body;
       lastStatus = s;
-      if (s.version !== PAGE_VERSION) { stale(s); return setTimeout(poll, 3000); }
+      if (s.version !== PAGE_VERSION) { el('setup').hidden = true; show('progress', ''); stale(s); return setTimeout(poll, 3000); }
       show('err', openErr || '');   // the last open error stays until a new round starts
-      if (s.state === 'error') return fail('Lỗi: ' + s.error);
+      if (s.state === 'error') { el('setup').hidden = true; show('progress', ''); return fail('Lỗi: ' + s.error); }
       if (s.state !== 'ready') {
+        el('setup').hidden = true;
+        show('progress', '');
         show('msg', 'Đang chuẩn bị (chỉ lần đầu): ' + (s.progress || s.state));
         return setTimeout(poll, 500);
       }
@@ -120,7 +122,7 @@
         return fail(openErr);
       }
       setTimeout(poll, 1000);
-    }).catch(function () { lastStatus = null; show('msg', 'Đang chờ service…'); setTimeout(poll, 1000); });
+    }).catch(function () { lastStatus = null; el('setup').hidden = true; show('progress', ''); show('msg', 'Đang chờ service…'); setTimeout(poll, 1000); });
   }
   // Copying the game data from the PC (POST /setup), shown while the service has none.
   var DEFAULT_IP = '192.168.1.10', DEFAULT_PORT = '8765', SAVED = 'th08-setup';
@@ -175,6 +177,7 @@
   function setupView(run) {
     var form = el('setup'), wasHidden = form.hidden;
     if (run && run.state === 'running') {
+      formErr = null;   // the service's own state wins over an older form or POST problem
       form.hidden = true;
       show('msg', 'Đang chép dữ liệu từ ' + run.from + '…');
       show('progress', progressText(run));
@@ -193,7 +196,7 @@
     if (wasHidden) el(failed ? 'start' : 'token').focus();
   }
   function startSetup() {
-    if (starting) return;
+    if (starting || !lastStatus || lastStatus.version !== PAGE_VERSION) return;
     var v = formValues();
     formErr = checkForm(v);
     if (formErr) return show('err', formErr);
@@ -204,6 +207,13 @@
       body: JSON.stringify(v) }, 5000).then(function (r) {
       starting = false;
       if (r.status === 202) { el('setup').hidden = true; show('msg', 'Đang bắt đầu chép…'); return; }
+      if (r.status === 409 && r.body && r.body.code === 'running') {   // already copying: just show it
+        formErr = null;
+        el('setup').hidden = true;
+        show('err', '');
+        show('msg', 'Đang chép…');
+        return;
+      }
       formErr = r.body && r.body.code === 'already-set'
         ? 'Dữ liệu game đã có trên TV, không cần chép lại (bản này chưa hỗ trợ chép đè).'
         : 'Service từ chối (HTTP ' + r.status + '): ' + (r.body && r.body.error);
