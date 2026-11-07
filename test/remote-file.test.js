@@ -20,6 +20,10 @@ test.before(async () => {
       res.writeHead(206, { 'Content-Range': 'bytes 0-9/100', 'Content-Length': 10 });
       return res.write(Buffer.alloc(3)); // then silence
     }
+    if (req.url === '/file/stall200') {
+      res.writeHead(200, { 'Content-Length': 100 });
+      return res.write(Buffer.alloc(3)); // then silence
+    }
     if (req.url === '/file/short') {
       res.writeHead(206, { 'Content-Range': 'bytes 0-9/100', 'Content-Length': 10 });
       res.write(Buffer.alloc(3));
@@ -117,4 +121,33 @@ test('negative and NaN indices follow File.slice', async () => {
   for (let i = 0; i < 10; i++) assert.equal(tail[i], syntheticByte(SIZE - 10 + i));
   assert.equal((await f.slice(0, -1048566).arrayBuffer()).byteLength, 10);
   assert.equal((await f.slice(0, NaN).arrayBuffer()).byteLength, 0);
+});
+
+test('a whole-file read may take timeoutMs plus its size at 2 MiB/s', () => {
+  assert.equal(new RemoteFile(SERVICE, 'th08.dat', 46838025).wholeTimeoutMs(), 10000 + 22335);
+  assert.equal(new RemoteFile(SERVICE, 'x', 20 * 1048576).wholeTimeoutMs(), 20000);
+});
+
+test('a whole-file read is cut at its own deadline, not the range one', async () => {
+  RemoteFile.timeoutMs = 100;
+  RemoteFile.fullRate = 1000;            // 100 B → 100 ms more: 200 ms in all
+  try {
+    const t0 = Date.now();
+    await assert.rejects(new RemoteFile(ODD, 'stall200', 100).arrayBuffer(), /no answer after 200 ms/);
+    assert.ok(Date.now() - t0 >= 180, 'waited for the whole-file deadline');
+  } finally { RemoteFile.timeoutMs = 10000; RemoteFile.fullRate = 2097152; }
+});
+
+test('onRead hears every read with its range, time and error', async () => {
+  const seen = [];
+  RemoteFile.onRead = (r) => seen.push(r);
+  try {
+    await new RemoteFile(SERVICE, 'thbgm.dat', SIZE).slice(16, 32).arrayBuffer();
+    await assert.rejects(new RemoteFile(SERVICE, 'missing.bin', SIZE).slice(0, 16).arrayBuffer());
+    RemoteFile.onRead = () => { throw new Error('observer bug'); };
+    assert.equal((await new RemoteFile(SERVICE, 'thbgm.dat', SIZE).slice(0, 8).arrayBuffer()).byteLength, 8);
+  } finally { RemoteFile.onRead = null; }
+  assert.deepEqual(seen.map((r) => [r.name, r.start, r.length, r.error && r.error.slice(0, 25)]),
+    [['thbgm.dat', 16, 16, null], ['missing.bin', 0, 16, 'expected HTTP 206, got 40']]);
+  assert.ok(seen.every((r) => typeof r.ms === 'number' && r.ms >= 0));
 });
