@@ -10,18 +10,33 @@ const html = fs.readFileSync(path.join(ROOT, 'app/index.html'), 'utf8');
 const script = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
 const OPEN = 'POST http://127.0.0.1:8790/open';
 
+const SETUP = 'POST http://127.0.0.1:8790/setup';
+
 // Runs the module page's inline script with stub DOM and network. Timers never fire by
 // themselves: fire(ms) runs the timers with that delay once, so the test steps the page.
-// net.statusDown makes /status fail (connection lost); net.openStatus is the answer to /open.
-async function runPage({ version, state, backForward, openStatus }) {
+// net.statusDown makes /status fail (connection lost); net.openStatus is the answer to /open;
+// net.ready (default: state is 'ready') and net.setup go into /status; net.setupStatus and
+// net.setupAnswer answer POST /setup, whose bodies land in net.setupBodies.
+async function runPage({ version, state, backForward, openStatus, ready, setup }) {
   const requests = [];
   const listeners = {};
   const timers = [];
   const els = {};
-  const net = { statusDown: false, openStatus: openStatus === undefined ? 202 : openStatus };
+  const net = { statusDown: false, openStatus: openStatus === undefined ? 202 : openStatus,
+    ready: ready === undefined ? state === 'ready' : ready, setup: setup || null, setupStatus: 202,
+    setupAnswer: { started: true }, setupBodies: [] };
   const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const document = {
+    activeElement: null,
+    getElementById(id) {
+      return els[id] || (els[id] = { id, textContent: '', value: '', hidden: false, handlers: {},
+        focus() { document.activeElement = this; },
+        addEventListener(type, fn) { (this.handlers[type] = this.handlers[type] || []).push(fn); },
+        click() { (this.handlers.click || []).forEach((fn) => fn({})); } });
+    },
+  };
   const ctx = {
-    document: { getElementById(id) { return els[id] || (els[id] = { textContent: '' }); } },
+    document,
     performance: { getEntriesByType: () => [{ type: backForward ? 'back_forward' : 'navigate' }] },
     history: { back() {} },
     setTimeout(fn, ms) { timers.push({ fn: fn, ms: ms }); return 0; },
@@ -31,8 +46,12 @@ async function runPage({ version, state, backForward, openStatus }) {
       requests.push(method + ' ' + url);
       const isStatus = url.endsWith('/status');
       if (isStatus && net.statusDown) return Promise.reject(new Error('connection lost'));
+      if (url.endsWith('/setup')) {
+        net.setupBodies.push(JSON.parse(init.body));
+        return Promise.resolve({ status: net.setupStatus, json: () => Promise.resolve(net.setupAnswer) });
+      }
       if (!isStatus && net.hangOpen) return new Promise(function () {});
-      const body = isStatus ? { version, state, reports: [] } : { error: 'stub' };
+      const body = isStatus ? { version, state, ready: net.ready, setup: net.setup, reports: [] } : { error: 'stub' };
       return Promise.resolve({ status: isStatus ? 200 : net.openStatus, json: () => Promise.resolve(body) });
     },
     addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
@@ -53,9 +72,16 @@ async function runPage({ version, state, backForward, openStatus }) {
       await flush();
     },
     async press(keyCode) {
-      (listeners.keydown || []).forEach((fn) => fn({ keyCode: keyCode }));
+      (listeners.keydown || []).forEach((fn) => fn({ keyCode: keyCode, preventDefault() {} }));
       await flush();
     },
+    async click(id) {
+      els[id].click();
+      await flush();
+    },
+    setups() { return requests.filter((r) => r === SETUP).length; },
+    el(id) { return document.getElementById(id); },
+    focused() { return document.activeElement && document.activeElement.id; },
     async pageshow(persisted) {
       (listeners.pageshow || []).forEach((fn) => fn({ persisted: persisted }));
       await flush();
@@ -129,4 +155,83 @@ test('OK does not send a second open while one is still in flight', async () => 
   await page.pageshow(true);             // back/forward cache again: waitOk while the POST is waiting
   await page.press(13);
   assert.equal(page.opens(), 1, 'no second POST: ' + page.requests.join(', '));
+});
+
+const running = (got) => ({ state: 'running', phase: 'download', from: '192.168.1.10:8765', error: null, files: [
+  { name: 'th08.dat', size: 46838025, got: 46838025, phase: 'done', attempt: 1 },
+  { name: 'thbgm.dat', size: 449961024, got: got, phase: 'download', attempt: 2 }] });
+const failed = (phase, error) => ({ state: 'error', phase, from: '192.168.1.10:8765', error, files: [] });
+
+test('without game data the form is shown with the default IP and port; nothing opens', async () => {
+  const page = await runPage({ version: VERSION, state: 'ready', ready: false });
+  assert.equal(page.els.setup.hidden, false);
+  assert.equal(page.els.ip.value, '192.168.1.10');
+  assert.equal(page.els.port.value, '8765');
+  assert.equal(page.els.start.textContent, 'Bắt đầu');
+  assert.equal(page.focused(), 'token');
+  assert.equal(page.opens(), 0);
+  await page.press(40);                  // ▼ from the token field goes to the button, and stays there
+  await page.press(40);
+  assert.equal(page.focused(), 'start');
+  await page.press(38);
+  await page.press(38);
+  assert.equal(page.focused(), 'port');
+});
+
+test('Bắt đầu checks the form, sends POST /setup and then shows the progress per file', async () => {
+  const page = await runPage({ version: VERSION, state: 'ready', ready: false });
+  page.el('token').value = 'ab';
+  await page.click('start');
+  assert.equal(page.setups(), 0, 'a bad token is not sent');
+  assert.match(page.els.err.textContent, /^Mã là dãy số/);
+  page.el('token').value = ' 12345678 ';
+  await page.click('start');
+  assert.deepEqual(page.net.setupBodies, [{ ip: '192.168.1.10', port: 8765, token: '12345678' }]);
+  assert.equal(page.els.setup.hidden, true);
+  page.net.setup = running(157286400);
+  await page.fire(1000);
+  assert.equal(page.els.progress.textContent,
+    'th08.dat: xong 44.7 MiB / 44.7 MiB\nthbgm.dat: đang tải 150.0 MiB / 429.1 MiB (lần 2)');
+  assert.match(page.els.msg.textContent, /Đang chép dữ liệu từ 192\.168\.1\.10:8765/);
+});
+
+test('setup errors are explained in Vietnamese and the button becomes Thử lại', async () => {
+  const cases = [
+    [failed('manifest', { code: 'token', message: 'x' }), /^Sai mã: máy tính trả lỗi 403/],
+    [failed('manifest', { code: 'network', message: 'cannot reach the PC server: connect ECONNREFUSED' }),
+      /^Không kết nối được máy tính 192\.168\.1\.10:8765 \(cannot reach.*tường lửa Windows/s],
+    [failed('download', { code: 'hash', message: 'thbgm.dat: SHA-256 …' }), /^Dữ liệu không khớp SHA-256 sau 3 lần tải/],
+    [failed('space', { code: 'space', message: 'x', need: 566231040, free: 104857600 }),
+      /^Không đủ dung lượng trống: cần 540\.0 MiB, còn 100\.0 MiB\./]];
+  for (const [setup, re] of cases) {
+    const page = await runPage({ version: VERSION, state: 'ready', ready: false, setup });
+    assert.match(page.els.err.textContent, re);
+    assert.equal(page.els.start.textContent, 'Thử lại');
+    assert.equal(page.els.setup.hidden, false);
+  }
+});
+
+test('a refused POST /setup is shown and kept over the last run error', async () => {
+  const page = await runPage({ version: VERSION, state: 'ready', ready: false,
+    setup: failed('manifest', { code: 'token', message: 'x' }) });
+  page.net.setupStatus = 409;
+  page.net.setupAnswer = { error: 'a setup is already running', code: 'running' };
+  page.el('token').value = '12345678';
+  await page.click('start');
+  await page.fire(1000);
+  assert.match(page.els.err.textContent, /^Service từ chối \(HTTP 409\): a setup is already running/);
+  page.net.setupAnswer = { error: 'the game data is already set up', code: 'already-set' };
+  await page.click('start');
+  assert.match(page.els.err.textContent, /^Dữ liệu game đã có trên TV/);
+});
+
+test('when the copy is done and the service is ready, the launcher opens', async () => {
+  const page = await runPage({ version: VERSION, state: 'ready', ready: false, setup: running(1) });
+  assert.equal(page.opens(), 0);
+  page.net.ready = true;
+  page.net.setup = Object.assign(running(449961024), { state: 'done', phase: 'done' });
+  await page.fire(1000);
+  assert.equal(page.opens(), 1, page.requests.join(', '));
+  assert.equal(page.els.setup.hidden, true);
+  assert.equal(page.els.progress.textContent, '');
 });

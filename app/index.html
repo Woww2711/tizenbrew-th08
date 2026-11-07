@@ -7,11 +7,28 @@
   html, body { margin: 0; height: 100%; background: #0b0c14; color: #eee; font: 32px sans-serif; }
   body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; }
   #err { color: #f88; max-width: 80%; text-align: center; white-space: pre-wrap; }
+  #setup { display: flex; flex-direction: column; gap: 16px; width: 60%; }
+  #setup[hidden] { display: none; }
+  #setup label { display: flex; justify-content: space-between; align-items: center; }
+  #setup input { width: 55%; font: 32px monospace; padding: 6px 12px; }
+  #setup input:focus, #setup button:focus { outline: 4px solid #fc6; }
+  #setup button { font: 32px sans-serif; padding: 10px; }
+  #note { font-size: 24px; color: #bbb; }
+  #progress { font: 28px monospace; white-space: pre-wrap; }
 </style>
 </head>
 <body>
 <div id="msg">Đang chờ service…</div>
 <div id="err"></div>
+<div id="setup" hidden>
+  <div id="note">Chép dữ liệu game từ máy tính (chỉ một lần). Trên máy tính chạy pc/serve-th08-data.ps1
+    rồi nhập IP, cổng và mã nó in ra. ▲▼ chuyển ô, OK để gõ.</div>
+  <label>IP máy tính <input id="ip" inputmode="decimal"></label>
+  <label>Cổng <input id="port" inputmode="numeric"></label>
+  <label>Mã <input id="token" inputmode="numeric"></label>
+  <button id="start">Bắt đầu</button>
+</div>
+<div id="progress"></div>
 <script>
   // The service installs the launcher into TizenBrew's data directory; it must run from
   // file:// (only those pages get SharedArrayBuffer on the TV), and this http page cannot
@@ -43,7 +60,7 @@
   // The last /status answer; every way to open the launcher checks it (a stale service must not open anything).
   var lastStatus = null;
   function canOpen() {
-    return !!lastStatus && lastStatus.version === PAGE_VERSION && lastStatus.state === 'ready';
+    return !!lastStatus && lastStatus.version === PAGE_VERSION && lastStatus.ready === true;
   }
   // An open is wanted but not sent yet (the gate was closed, or a retry was held back by waitOk);
   // poll() sends it once the service is ready again. A POST that is still waiting blocks a second one.
@@ -93,6 +110,9 @@
         show('msg', 'Đang chuẩn bị (chỉ lần đầu): ' + (s.progress || s.state));
         return setTimeout(poll, 500);
       }
+      if (!s.ready) { setupView(s.setup); return setTimeout(poll, 1000); }
+      el('setup').hidden = true;
+      show('progress', '');
       if (waitOk) show('msg', 'Bấm OK để mở lại trang thử, Back để thoát.');
       else if (!inFlight && (pending || !asked)) askOpen();
       else if (s.openError) {
@@ -102,6 +122,106 @@
       setTimeout(poll, 1000);
     }).catch(function () { lastStatus = null; show('msg', 'Đang chờ service…'); setTimeout(poll, 1000); });
   }
+  // Copying the game data from the PC (POST /setup), shown while the service has none.
+  var DEFAULT_IP = '192.168.1.10', DEFAULT_PORT = '8765', SAVED = 'th08-setup';
+  var FIELDS = ['ip', 'port', 'token', 'start'];
+  var formErr = null;   // a problem with the form or the POST itself, newer than the last run's error
+  var starting = false;
+  var PHASES = { wait: 'chờ', download: 'đang tải', verify: 'đang kiểm tra', done: 'xong' };
+  function el(id) { return document.getElementById(id); }
+  function mib(bytes) { return (bytes / 1048576).toFixed(1) + ' MiB'; }
+  function saved() {
+    try { return JSON.parse(window.localStorage.getItem(SAVED)) || {}; } catch (e) { return {}; }
+  }
+  function save(v) {
+    try { window.localStorage.setItem(SAVED, JSON.stringify({ ip: v.ip, port: v.port })); } catch (e) { /* none */ }
+  }
+  function formValues() {
+    return { ip: String(el('ip').value).trim(), port: Number(el('port').value), token: String(el('token').value).trim() };
+  }
+  function checkForm(v) {
+    var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(v.ip);
+    if (!m || Number(m[1]) > 255 || Number(m[2]) > 255 || Number(m[3]) > 255 || Number(m[4]) > 255) {
+      return 'IP không đúng dạng (ví dụ 192.168.1.10).';
+    }
+    if (!(v.port >= 1 && v.port <= 65535 && v.port % 1 === 0)) return 'Cổng phải là số từ 1 đến 65535.';
+    if (!/^[A-Za-z0-9]{4,64}$/.test(v.token)) return 'Mã là dãy số in trong cửa sổ PowerShell (ít nhất 4 ký tự).';
+    return null;
+  }
+  function setupMessage(run) {
+    var e = run.error || {}, m = e.message || '';
+    if (e.code === 'network' && run.phase === 'manifest') {
+      return 'Không kết nối được máy tính ' + run.from + ' (' + m + ').\nKiểm tra: cửa sổ PowerShell vẫn chạy ' +
+        'serve-th08-data.ps1, đúng IP và cổng, tường lửa Windows cho phép.';
+    }
+    if (e.code === 'network') return 'Mất kết nối khi tải (đã thử 3 lần): ' + m;
+    if (e.code === 'token') return 'Sai mã: máy tính trả lỗi 403. Nhập đúng mã in trong cửa sổ PowerShell.';
+    if (e.code === 'hash') return 'Dữ liệu không khớp SHA-256 sau 3 lần tải: ' + m;
+    if (e.code === 'size') return 'Sai kích thước file: ' + m;
+    if (e.code === 'space' && e.need) return 'Không đủ dung lượng trống: cần ' + mib(e.need) + ', còn ' + mib(e.free) + '.';
+    if (e.code === 'space') return 'Không đo được dung lượng trống: ' + m;
+    if (e.code === 'manifest') return 'Máy tính gửi danh sách file không hợp lệ: ' + m;
+    if (e.code === 'disk') return 'Lỗi ghi bộ nhớ TV: ' + m;
+    return 'Lỗi: ' + m;
+  }
+  function progressText(run) {
+    if (run.phase === 'manifest') return 'Đang hỏi máy tính danh sách file…';
+    if (run.phase === 'space') return 'Đang kiểm tra dung lượng trống…';
+    return run.files.map(function (f) {
+      return f.name + ': ' + PHASES[f.phase] + ' ' + mib(f.got) + ' / ' + mib(f.size) +
+        (f.attempt > 1 ? ' (lần ' + f.attempt + ')' : '');
+    }).join('\n') + (run.phase === 'activate' ? '\nĐang kích hoạt dữ liệu…' : '');
+  }
+  function setupView(run) {
+    var form = el('setup'), wasHidden = form.hidden;
+    if (run && run.state === 'running') {
+      form.hidden = true;
+      show('msg', 'Đang chép dữ liệu từ ' + run.from + '…');
+      show('progress', progressText(run));
+      show('err', '');
+      return;
+    }
+    form.hidden = false;
+    show('msg', 'Chưa có dữ liệu game.');
+    show('progress', '');
+    var failed = run && (run.state === 'error' || run.state === 'cancelled');
+    show('start', failed ? 'Thử lại' : 'Bắt đầu');
+    if (formErr) show('err', formErr);
+    else if (run && run.state === 'error') show('err', setupMessage(run) + '\nSửa nếu cần rồi bấm Thử lại.');
+    else if (run && run.state === 'cancelled') show('err', 'Việc chép bị dừng giữa chừng. Bấm Thử lại.');
+    else show('err', '');
+    if (wasHidden) el(failed ? 'start' : 'token').focus();
+  }
+  function startSetup() {
+    if (starting) return;
+    var v = formValues();
+    formErr = checkForm(v);
+    if (formErr) return show('err', formErr);
+    save(v);
+    starting = true;
+    show('err', '');
+    request(SERVICE + '/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(v) }, 5000).then(function (r) {
+      starting = false;
+      if (r.status === 202) { el('setup').hidden = true; show('msg', 'Đang bắt đầu chép…'); return; }
+      formErr = r.body && r.body.code === 'already-set'
+        ? 'Dữ liệu game đã có trên TV, không cần chép lại (bản này chưa hỗ trợ chép đè).'
+        : 'Service từ chối (HTTP ' + r.status + '): ' + (r.body && r.body.error);
+      show('err', formErr);
+    }, function (e) {
+      starting = false;
+      formErr = 'Service không trả lời: ' + e.message;
+      show('err', formErr);
+    });
+  }
+  function moveFocus(step) {
+    var active = document.activeElement, i = FIELDS.indexOf(active ? active.id : '');
+    el(FIELDS[Math.max(0, Math.min(FIELDS.length - 1, i + step))]).focus();
+  }
+  el('setup').hidden = true;
+  el('ip').value = saved().ip || DEFAULT_IP;
+  el('port').value = saved().port || DEFAULT_PORT;
+  el('start').addEventListener('click', startSetup);
   function cameBack() {
     var nav = performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;
     return !!nav && nav.type === 'back_forward';
@@ -109,6 +229,10 @@
   window.addEventListener('keydown', function (e) {
     if (e.keyCode === 10009) history.back();
     if (e.keyCode === 13 && waitOk && canOpen() && !inFlight) { waitOk = false; askOpen(); }
+    if ((e.keyCode === 38 || e.keyCode === 40) && !el('setup').hidden) {
+      e.preventDefault();
+      moveFocus(e.keyCode === 40 ? 1 : -1);
+    }
   });
   // Restored from the back/forward cache: the old poll loop keeps running.
   window.addEventListener('pageshow', function (e) { if (e.persisted) { waitOk = true; asked = 0; pending = false; openErr = null; } });
