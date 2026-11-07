@@ -20,7 +20,7 @@ test('status reports the version, data dir and file:// launcher url', async () =
   assert.equal(s.version, VERSION);
   assert.equal(s.state, 'ready');
   assert.equal(s.dataDir, dataDir);
-  assert.equal(s.launcherUrl, 'file://' + path.join(dataDir, 'th08', 'spike', 'spike.html'));
+  assert.equal(s.launcherUrl, 'file://' + path.join(dataDir, 'th08', 'build', 'launcher.html'));
 });
 
 test('every response carries CORS and CORP headers; OPTIONS is a 204 preflight', async () => {
@@ -55,7 +55,7 @@ test('a malformed percent escape in a file name answers 400 and the service keep
 });
 
 test('range read answers 206 with exact bytes and Content-Range', async () => {
-  const res = await fetch(BASE + '/file/synthetic.bin', { headers: { Range: 'bytes=300000-300009' } });
+  const res = await fetch(BASE + '/file/thbgm.dat', { headers: { Range: 'bytes=300000-300009' } });
   assert.equal(res.status, 206);
   assert.equal(res.headers.get('content-range'), 'bytes 300000-300009/1048576');
   const bytes = new Uint8Array(await res.arrayBuffer());
@@ -63,19 +63,19 @@ test('range read answers 206 with exact bytes and Content-Range', async () => {
 });
 
 test('read without Range answers 200 with the whole file', async () => {
-  const res = await fetch(BASE + '/file/synthetic.bin');
+  const res = await fetch(BASE + '/file/thbgm.dat');
   assert.equal(res.status, 200);
   assert.equal((await res.arrayBuffer()).byteLength, 1048576);
 });
 
 test('unsatisfiable range answers 416', async () => {
-  const res = await fetch(BASE + '/file/synthetic.bin', { headers: { Range: 'bytes=2000000-' } });
+  const res = await fetch(BASE + '/file/thbgm.dat', { headers: { Range: 'bytes=2000000-' } });
   assert.equal(res.status, 416);
   assert.equal(res.headers.get('content-range'), 'bytes */1048576');
 });
 
-test('names outside the allow-list answer 404', async () => {
-  for (const name of ['missing.bin', '..%2Fspike.html', '.complete']) {
+test('names outside the allow-list, and th08.dat not copied yet, answer 404', async () => {
+  for (const name of ['missing.bin', '..%2Fbuild%2Flauncher.html', '.complete', 'th08.dat']) {
     assert.equal((await fetch(BASE + '/file/' + name)).status, 404, name);
   }
 });

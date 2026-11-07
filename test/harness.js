@@ -26,10 +26,11 @@ function loadService(env, globals) {
   return sandbox.module.exports;
 }
 
+// Monotonic clock: WSL's wall clock jumps by seconds now and then.
 async function waitFor(check, timeoutMs = 5000) {
-  const end = Date.now() + timeoutMs;
+  const end = performance.now() + timeoutMs;
   while (!check()) {
-    if (Date.now() > end) throw new Error('waitFor timed out');
+    if (performance.now() > end) throw new Error('waitFor timed out');
     await new Promise((r) => setTimeout(r, 20));
   }
 }
@@ -42,17 +43,20 @@ function syntheticByte(i) {
   return i % 251;
 }
 
-const SPIKE_FILES = ['th08-web.js', 'th08-web.wasm', 'spike.html', 'spike.js', 'remote-file.js', 'worker.js'];
+const BUILD_FILES = ['th08-web.js', 'th08-web.wasm', 'launcher.html', 'saves.js', 'probe.js'];
 
-// A data dir that already holds this version of the spike, so no download happens.
+// A data dir that already holds this version's build (so no download happens) and a
+// retail/thbgm.dat of 1 MiB whose byte i is syntheticByte(i). Returns the build dir.
 function preinstall(dataDir) {
-  const dir = path.join(dataDir, 'th08', 'spike');
+  const root = path.join(dataDir, 'th08');
+  const dir = path.join(root, 'build');
   fs.mkdirSync(dir, { recursive: true });
-  for (const name of SPIKE_FILES) fs.writeFileSync(path.join(dir, name), 'placeholder ' + name);
+  for (const name of BUILD_FILES) fs.writeFileSync(path.join(dir, name), 'placeholder ' + name);
+  fs.writeFileSync(path.join(dir, '.complete'), VERSION);
+  fs.mkdirSync(path.join(root, 'retail'));
   const buf = Buffer.alloc(1048576);
   for (let i = 0; i < buf.length; i++) buf[i] = syntheticByte(i);
-  fs.writeFileSync(path.join(dir, 'synthetic.bin'), buf);
-  fs.writeFileSync(path.join(dir, '.complete'), VERSION);
+  fs.writeFileSync(path.join(root, 'retail', 'thbgm.dat'), buf);
   return dir;
 }
 
@@ -79,4 +83,4 @@ function makeTarGz(files) {
   return zlib.gzipSync(Buffer.concat(blocks));
 }
 
-module.exports = { loadService, waitFor, tempDir, preinstall, makeTarGz, syntheticByte, VERSION, ROOT };
+module.exports = { loadService, waitFor, tempDir, preinstall, makeTarGz, syntheticByte, VERSION, ROOT, BUILD_FILES };

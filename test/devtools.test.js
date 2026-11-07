@@ -102,7 +102,7 @@ test('without a matching page the open error is reported on status', async () =>
   } finally { stop(); }
 });
 
-test('POST /open before the spike is installed answers 409', async () => {
+test('POST /open before the launcher is installed answers 409', async () => {
   const svc = loadService({ TH08_DATA_DIR: tempDir(), TH08_PORT: '18806',
     TH08_BUILD_URL: 'http://127.0.0.1:9/never', TH08_DEVTOOLS_PORTS: '18895' });
   try {

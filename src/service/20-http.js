@@ -1,8 +1,8 @@
-// HTTP API on 127.0.0.1:PORT. The spike page is a file:// document (origin "null"), so
+// HTTP API on 127.0.0.1:PORT. The launcher is a file:// document (origin "null"), so
 // every response allows any origin and is loadable under COEP require-corp.
-var fileDir = null;             // directory of the files served on /file/<name>
-var FILE_ALLOW = [SYNTHETIC_NAME];
-var openHandler = null;         // set once the spike is installed
+var fileDir = null;             // <DATA>/th08/retail: the files served on /file/<name>
+var FILE_ALLOW = RETAIL_FILES;
+var openHandler = null;         // set once the launcher build is installed
 
 function setCors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');

@@ -1,14 +1,17 @@
 // What the service knows, served on GET /status: the TV gives no other view of it.
 var status = {
   version: VERSION,
-  state: 'starting',          // starting | installing | ready | error
+  state: 'starting',          // starting | installing | ready | error | blocked | stopped
   error: null,
   progress: '',
   node: process.version,
   dataDir: null,
   launcherUrl: null,
-  openMethod: null,           // devtools | launchUrl, once the spike page was opened
+  openMethod: null,           // devtools | launchUrl, once the launcher was opened
   openError: null,
+  startedAt: new Date().toISOString(),
+  disk: null,                 // { method, path, free, total } or { method, path, error }
+  takeover: null,             // set when port PORT was busy at start, see 45-takeover.js
   reports: [],
   log: []
 };

@@ -1,4 +1,13 @@
-// Installing the spike: the pinned th08-web build, the spike pages and a synthetic file.
+// Installing the launcher build with staged activation (spec §3.2):
+//   <DATA>/th08/build/       active build: th08-web.js, th08-web.wasm, the launcher files and
+//                            .complete (the VERSION that installed it, written last)
+//   <DATA>/th08/staging/     a new build is assembled in staging/build; removed when done,
+//                            on error and at every start
+//   <DATA>/th08/build.old/   the previous build, only while activating
+//   <DATA>/th08/state.json   { buildVersion, buildReady, ... } mirrors build/; later plans
+//                            add dataReady and files to it
+//   <DATA>/th08/retail/      th08.dat, thbgm.dat (copied from the PC in a later plan)
+// The launcher URL, file://<DATA>/th08/build/launcher.html, is the same for every version.
 
 var DOWNLOAD_TIMEOUT_MS = 60000;
 
@@ -74,6 +83,18 @@ function mkdirp(dir) {
   fs.mkdirSync(dir);
 }
 
+// rm -rf without fs.rmSync (Node 14.14+), keeping the Node 10.4 floor.
+function removeTree(p) {
+  var st;
+  try { st = fs.lstatSync(p); } catch (e) { return; }
+  if (st.isDirectory()) {
+    fs.readdirSync(p).forEach(function (name) { removeTree(path.join(p, name)); });
+    fs.rmdirSync(p);
+  } else {
+    fs.unlinkSync(p);
+  }
+}
+
 function writeAtomic(file, buf) {
   fs.writeFileSync(file + '.part', buf);
   fs.renameSync(file + '.part', file);
@@ -83,16 +104,66 @@ function readText(file) {
   try { return fs.readFileSync(file, 'utf8'); } catch (e) { return null; }
 }
 
-// Byte i is i mod 251, so any slice can be checked without the file.
-function syntheticBytes(size) {
-  var buf = Buffer.alloc(size);
-  for (var i = 0; i < size; i++) buf[i] = i % 251;
-  return buf;
+function fileSize(file) {
+  try { return fs.statSync(file).size; } catch (e) { return -1; }
+}
+
+function readState(root) {
+  try { return JSON.parse(fs.readFileSync(path.join(root, 'state.json'), 'utf8')) || {}; } catch (e) { return {}; }
+}
+
+// Merges `patch` into state.json, keeping fields this version does not know.
+function writeState(root, patch) {
+  var state = readState(root);
+  Object.keys(patch).forEach(function (k) { state[k] = patch[k]; });
+  writeAtomic(path.join(root, 'state.json'), Buffer.from(JSON.stringify(state, null, 2)));
+  return state;
+}
+
+// The version that installed `dir` if it holds a whole build (marker plus every file
+// non-empty), else null.
+function buildVersionOf(dir) {
+  var marker = readText(path.join(dir, '.complete'));
+  if (!marker) return null;
+  var names = BUILD_FILES.concat(LAUNCHER_FILES);
+  for (var i = 0; i < names.length; i++) {
+    if (fileSize(path.join(dir, names[i])) <= 0) return null;
+  }
+  return marker;
+}
+
+// An activation cut short leaves build.old/: keep build/ if it is whole, else put the old
+// one back. Leftover staging/ is always removed.
+function recover(root) {
+  var build = path.join(root, 'build'), old = path.join(root, 'build.old');
+  if (fs.existsSync(old)) {
+    if (buildVersionOf(build)) {
+      removeTree(old);
+      log('removed build.old');
+    } else {
+      removeTree(build);
+      fs.renameSync(old, build);
+      log('restored build.old');
+    }
+  }
+  removeTree(path.join(root, 'staging'));
+}
+
+function syncState(root) {
+  var v = buildVersionOf(path.join(root, 'build'));
+  return writeState(root, { buildVersion: v, buildReady: v === VERSION });
+}
+
+// A service told to stop (a newer one took the port, see 45-takeover.js) must not write
+// into <DATA>/th08 any more. Writes are synchronous, so checking before each is enough.
+function checkRunning() {
+  if (status.state === 'stopped') throw new Error('service stopped');
 }
 
 function installBuild(dir) {
   log('download ' + BUILD_URL);
   return download(BUILD_URL).then(function (gz) {
+    checkRunning();
     var got = sha256(gz);
     if (got !== BUILD_SHA256) throw new Error('build sha256 mismatch: expected ' + BUILD_SHA256 + ', got ' + got);
     var entries = untar(zlib.gunzipSync(gz));
@@ -103,56 +174,57 @@ function installBuild(dir) {
   });
 }
 
-function installAssets(dir) {
-  return ASSET_FILES.reduce(function (chain, name) {
+function installLauncher(dir) {
+  return LAUNCHER_FILES.reduce(function (chain, name) {
     return chain.then(function () {
-      log('download ' + ASSET_BASE + name);
-      return download(ASSET_BASE + name).then(function (buf) {
-        if (!buf.length) throw new Error('empty download: ' + ASSET_BASE + name);
+      log('download ' + LAUNCHER_BASE + name);
+      return download(LAUNCHER_BASE + name).then(function (buf) {
+        checkRunning();
+        if (!buf.length) throw new Error('empty download: ' + LAUNCHER_BASE + name);
         writeAtomic(path.join(dir, name), buf);
       });
     });
   }, Promise.resolve());
 }
 
-function fileSize(file) {
-  try { return fs.statSync(file).size; } catch (e) { return -1; }
+// staging/build → build: (1) build → build.old, (2) staging/build → build, (3) remove
+// build.old.
+function activate(root) {
+  checkRunning();
+  var build = path.join(root, 'build'), old = path.join(root, 'build.old');
+  if (fs.existsSync(build)) fs.renameSync(build, old);
+  fs.renameSync(path.join(root, 'staging', 'build'), build);
+  removeTree(old);
+  removeTree(path.join(root, 'staging'));
 }
 
-// Installed = this version's marker plus every expected file (synthetic.bin at full size).
-function spikeComplete(dir) {
-  if (readText(path.join(dir, '.complete')) !== VERSION) return false;
-  var names = BUILD_FILES.concat(ASSET_FILES);
-  for (var i = 0; i < names.length; i++) {
-    if (fileSize(path.join(dir, names[i])) <= 0) return false;
-  }
-  return fileSize(path.join(dir, SYNTHETIC_NAME)) === SYNTHETIC_SIZE;
-}
-
-// Resolves the spike directory and installs into it unless it is complete. Milestone-0
-// exception to the spec's staged activation: the spike holds no user data, so recovery from
-// an interrupted install is a full reinstall (~1.7 MB). The stale marker goes first and the
-// new one is written last.
+// Resolves once build/ holds this version, installing it through staging/ if needed.
 function install() {
   checkNode();
   var base = resolveDataDir();
-  var dir = path.join(base, 'th08', 'spike');
-  var marker = path.join(dir, '.complete');
+  var root = path.join(base, 'th08');
   status.dataDir = base;
-  status.launcherUrl = 'file://' + path.join(dir, 'spike.html');
-  mkdirp(dir);
-  fileDir = dir;
-  if (spikeComplete(dir)) return Promise.resolve();
-  if (fs.existsSync(marker)) fs.unlinkSync(marker);
+  status.launcherUrl = 'file://' + path.join(root, 'build', 'launcher.html');
+  mkdirp(root);
+  fileDir = path.join(root, 'retail');
+  recover(root);
+  if (syncState(root).buildReady) return Promise.resolve();
+  var staged = path.join(root, 'staging', 'build');
+  mkdirp(staged);
   status.state = 'installing';
   status.progress = 'th08-web build';
-  return installBuild(dir).then(function () {
-    status.progress = 'spike pages';
-    return installAssets(dir);
+  return installBuild(staged).then(function () {
+    status.progress = 'launcher files';
+    return installLauncher(staged);
   }).then(function () {
-    status.progress = 'synthetic file';
-    writeAtomic(path.join(dir, SYNTHETIC_NAME), syntheticBytes(SYNTHETIC_SIZE));
-    writeAtomic(marker, Buffer.from(VERSION));
+    checkRunning();
+    writeAtomic(path.join(staged, '.complete'), Buffer.from(VERSION));
+    activate(root);
+    syncState(root);
     status.progress = '';
+    log('installed build ' + VERSION);
+  }).catch(function (e) {
+    if (status.state !== 'stopped') removeTree(path.join(root, 'staging'));
+    throw e;
   });
 }

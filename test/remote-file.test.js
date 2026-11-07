@@ -45,20 +45,20 @@ test.after(() => {
 });
 
 test('slice reads exact bytes at a nonzero offset', async () => {
-  const buf = await new RemoteFile(SERVICE, 'synthetic.bin', SIZE).slice(300000, 300000 + 65536).arrayBuffer();
+  const buf = await new RemoteFile(SERVICE, 'thbgm.dat', SIZE).slice(300000, 300000 + 65536).arrayBuffer();
   const bytes = new Uint8Array(buf);
   assert.equal(bytes.length, 65536);
   for (let i = 0; i < bytes.length; i++) assert.equal(bytes[i], syntheticByte(300000 + i));
 });
 
 test('slice past the end is clamped like File.slice; empty slices need no request', async () => {
-  const f = new RemoteFile(SERVICE, 'synthetic.bin', SIZE);
+  const f = new RemoteFile(SERVICE, 'thbgm.dat', SIZE);
   assert.equal((await f.slice(SIZE - 10, SIZE + 50).arrayBuffer()).byteLength, 10);
   assert.equal((await f.slice(SIZE, SIZE + 5).arrayBuffer()).byteLength, 0);
 });
 
 test('arrayBuffer reads the whole file', async () => {
-  assert.equal((await new RemoteFile(SERVICE, 'synthetic.bin', SIZE).arrayBuffer()).byteLength, SIZE);
+  assert.equal((await new RemoteFile(SERVICE, 'thbgm.dat', SIZE).arrayBuffer()).byteLength, SIZE);
 });
 
 test('a missing file rejects with the HTTP status', async () => {
@@ -66,7 +66,7 @@ test('a missing file rejects with the HTTP status', async () => {
 });
 
 test('a wrong size is caught by the Content-Range check', async () => {
-  await assert.rejects(new RemoteFile(SERVICE, 'synthetic.bin', 2000000).slice(0, 16).arrayBuffer(),
+  await assert.rejects(new RemoteFile(SERVICE, 'thbgm.dat', 2000000).slice(0, 16).arrayBuffer(),
     /expected Content-Range "bytes 0-15\/2000000", got "bytes 0-15\/1048576"/);
 });
 
@@ -106,12 +106,12 @@ test('offsets beyond 2^32 are sent exactly', async () => {
 });
 
 test('whole-file arrayBuffer rejects on a wrong size or a missing file', async () => {
-  await assert.rejects(new RemoteFile(SERVICE, 'synthetic.bin', 100).arrayBuffer(), /expected 100 bytes/);
+  await assert.rejects(new RemoteFile(SERVICE, 'thbgm.dat', 100).arrayBuffer(), /expected 100 bytes/);
   await assert.rejects(new RemoteFile(SERVICE, 'missing.bin', SIZE).arrayBuffer(), /expected HTTP 200, got 404/);
 });
 
 test('negative and NaN indices follow File.slice', async () => {
-  const f = new RemoteFile(SERVICE, 'synthetic.bin', SIZE);
+  const f = new RemoteFile(SERVICE, 'thbgm.dat', SIZE);
   const tail = new Uint8Array(await f.slice(-10).arrayBuffer());
   assert.equal(tail.length, 10);
   for (let i = 0; i < 10; i++) assert.equal(tail[i], syntheticByte(SIZE - 10 + i));

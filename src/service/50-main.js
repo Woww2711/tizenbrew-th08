@@ -1,6 +1,6 @@
 var opening = false;
 
-function openSpike() {
+function openLauncher() {
   if (opening) return;
   opening = true;
   status.openError = null;
@@ -22,7 +22,7 @@ server.on('error', function (e) {
 server.listen(PORT, '127.0.0.1', function () {
   Promise.resolve().then(install).then(function () {
     status.state = 'ready';
-    openHandler = openSpike;
+    openHandler = openLauncher;
     log('ready');
   }, function (e) {
     status.state = 'error';
@@ -40,5 +40,5 @@ module.exports = {
     return status.launcherUrl;
   },
   onStop: function () { server.close(); },
-  _test: { parseRange: parseRange, untar: untar, syntheticBytes: syntheticBytes, sha256: sha256 }
+  _test: { parseRange: parseRange, untar: untar, sha256: sha256 }
 };
