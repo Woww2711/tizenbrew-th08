@@ -31,6 +31,7 @@ async function runPage({ version, state, backForward, openStatus }) {
       requests.push(method + ' ' + url);
       const isStatus = url.endsWith('/status');
       if (isStatus && net.statusDown) return Promise.reject(new Error('connection lost'));
+      if (!isStatus && net.hangOpen) return new Promise(function () {});
       const body = isStatus ? { version, state, reports: [] } : { error: 'stub' };
       return Promise.resolve({ status: isStatus ? 200 : net.openStatus, json: () => Promise.resolve(body) });
     },
@@ -105,4 +106,27 @@ test('after Back, a retry waits for OK instead of opening on its own', async () 
   assert.ok(page.els.msg.textContent.indexOf('OK') >= 0, page.els.msg.textContent);
   await page.press(13);                  // OK sends it
   assert.equal(page.opens(), 2, 'OK sends the open');
+});
+
+test('the error of three failed opens stays on screen after the service answers ready', async () => {
+  const page = await runPage({ version: '0.0.2', state: 'ready', backForward: false, openStatus: 500 });
+  await page.fire(2000);                 // retry 2: refused
+  await page.fire(2000);                 // retry 3: refused, final error
+  assert.equal(page.opens(), 3, 'three attempts: ' + page.requests.join(', '));
+  assert.ok(page.els.err.textContent.indexOf('Không gửi được') >= 0, page.els.err.textContent);
+  await page.fire(1000);                 // poll: ready
+  await page.fire(1000);                 // and again
+  assert.ok(page.els.err.textContent.indexOf('Không gửi được') >= 0, 'error still shown: ' + page.els.err.textContent);
+  assert.equal(page.els.msg.textContent, '');
+  assert.equal(page.opens(), 3, 'no further attempts');
+});
+
+test('OK does not send a second open while one is still in flight', async () => {
+  const page = await runPage({ version: '0.0.2', state: 'ready', backForward: true });
+  page.net.hangOpen = true;              // the first POST never gets an answer
+  await page.press(13);
+  assert.equal(page.opens(), 1, 'first POST sent');
+  await page.pageshow(true);             // back/forward cache again: waitOk while the POST is waiting
+  await page.press(13);
+  assert.equal(page.opens(), 1, 'no second POST: ' + page.requests.join(', '));
 });

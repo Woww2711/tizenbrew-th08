@@ -48,11 +48,14 @@
   // An open is wanted but not sent yet (the gate was closed, or a retry was held back by waitOk);
   // poll() sends it once the service is ready again. A POST that is still waiting blocks a second one.
   var pending = false, inFlight = false;
+  var openErr = null;   // the error of the last open round, kept on screen while the service polls ready
   function askOpen() {
     if (!canOpen()) { pending = true; return; }
     pending = false;
     inFlight = true;
     asked++;
+    openErr = null;   // a new round clears the error of the last one
+    show('err', '');
     show('msg', 'Đang mở trang thử…');
     request(SERVICE + '/open', { method: 'POST' }, 5000).then(function (r) {
       inFlight = false;
@@ -60,7 +63,8 @@
     }).catch(function (e) {
       inFlight = false;
       if (asked < 3) return setTimeout(retry, 2000);
-      fail('Không gửi được yêu cầu mở: ' + e.message + '\nBấm Back rồi mở lại module.');
+      openErr = 'Không gửi được yêu cầu mở: ' + e.message + '\nBấm Back rồi mở lại module.';
+      fail(openErr);
     });
   }
   // After Back the page never opens on its own: the retry waits for OK (poll() shows the prompt).
@@ -83,7 +87,7 @@
       var s = r.body;
       lastStatus = s;
       if (s.version !== PAGE_VERSION) { stale(s); return setTimeout(poll, 3000); }
-      show('err', '');
+      show('err', openErr || '');   // the last open error stays until a new round starts
       if (s.state === 'error') return fail('Lỗi: ' + s.error);
       if (s.state !== 'ready') {
         show('msg', 'Đang chuẩn bị (chỉ lần đầu): ' + (s.progress || s.state));
@@ -91,7 +95,10 @@
       }
       if (waitOk) show('msg', 'Bấm OK để mở lại trang thử, Back để thoát.');
       else if (!inFlight && (pending || !asked)) askOpen();
-      else if (s.openError) return fail('Không mở được: ' + s.openError + '\nBấm Back rồi mở lại module.');
+      else if (s.openError) {
+        openErr = 'Không mở được: ' + s.openError + '\nBấm Back rồi mở lại module.';
+        return fail(openErr);
+      }
       setTimeout(poll, 1000);
     }).catch(function () { lastStatus = null; show('msg', 'Đang chờ service…'); setTimeout(poll, 1000); });
   }
@@ -101,10 +108,10 @@
   }
   window.addEventListener('keydown', function (e) {
     if (e.keyCode === 10009) history.back();
-    if (e.keyCode === 13 && waitOk && canOpen()) { waitOk = false; askOpen(); }
+    if (e.keyCode === 13 && waitOk && canOpen() && !inFlight) { waitOk = false; askOpen(); }
   });
   // Restored from the back/forward cache: the old poll loop keeps running.
-  window.addEventListener('pageshow', function (e) { if (e.persisted) { waitOk = true; asked = 0; pending = false; } });
+  window.addEventListener('pageshow', function (e) { if (e.persisted) { waitOk = true; asked = 0; pending = false; openErr = null; } });
   waitOk = cameBack();
   poll();
 </script>
