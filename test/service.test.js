@@ -23,7 +23,8 @@ test('service.js loads in a TizenBrew-like sandbox and reports its version', () 
 
 test('code that runs on the TV uses ES5 syntax', () => {
   const files = fs.readdirSync(path.join(ROOT, 'src', 'service')).map((f) => path.join('src', 'service', f))
-    .concat(['spike/remote-file.js', 'spike/worker.js', 'spike/spike.js'])
+    .concat(['spike/remote-file.js', 'spike/worker.js', 'spike/spike.js', 'launcher/saves.js', 'launcher/probe.js',
+      'launcher/launcher.html', 'app/index.html'])
     .filter((f) => fs.existsSync(path.join(ROOT, f)));
   for (const f of files) {
     const code = fs.readFileSync(path.join(ROOT, f), 'utf8').replace(/\/\/.*$/gm, '');
