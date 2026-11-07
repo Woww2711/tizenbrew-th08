@@ -84,11 +84,16 @@ that were already off, or that block other programs or profiles, are untouched).
 deleted only after every rule is on again:
 
     $saved = "$env:TEMP\th08-firewall-disabled.txt"
-    $names = Get-Content $saved
-    $names | ForEach-Object { Enable-NetFirewallRule -Name $_ }
-    $names | ForEach-Object { Get-NetFirewallRule -Name $_ } | Format-Table Name, Enabled, Profile, Action
-    if (-not ($names | ForEach-Object { Get-NetFirewallRule -Name $_ } | Where-Object { $_.Enabled -ne 'True' })) {
-      Remove-Item $saved } else { "Some rules are still off: the list is kept; run the restore again." }
+    $failed = @()
+    foreach ($n in (Get-Content $saved)) {
+      try {
+        Enable-NetFirewallRule -Name $n -ErrorAction Stop
+        $r = Get-NetFirewallRule -Name $n -ErrorAction Stop
+        if (-not $r -or $r.Enabled -ne 'True') { $failed += $n }
+      } catch { $failed += $n }
+    }
+    if ($failed.Count -eq 0) { Remove-Item $saved; "All rules are on again; list deleted." }
+    else { "NOT restored (list kept, run again): " + ($failed -join ', ') }
 
 (`Enabled` must be `True` again for every listed rule.) Without Block rules, accepting the
 Windows prompt for Windows PowerShell, or an Allow rule for TCP 8765 from the TV's IP, is enough.

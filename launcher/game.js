@@ -354,7 +354,7 @@ var Module = typeof document === 'undefined' ? null : (function () {
       phase = 'stalled';
       input.lock();
       tracker.flush();
-      show('Game dừng phản hồi (15 giây không có khung hình mới; thường là do chọn Quit).\n\nBấm OK hoặc A để chạy lại.');
+      show('Game dừng phản hồi (15 giây không có khung hình mới; thường là do chọn Quit).\n\nBấm OK hoặc A để chạy lại · Back: về trang module.');
       report('stalled', 'warn', 'no new frame for 15 s (title Quit, or a hang)');
     }
   }
