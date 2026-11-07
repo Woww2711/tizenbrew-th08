@@ -40,5 +40,5 @@ module.exports = {
     return status.launcherUrl;
   },
   onStop: function () { server.close(); },
-  _test: { parseRange: parseRange, untar: untar, sha256: sha256 }
+  _test: { parseRange: parseRange, untar: untar, sha256: sha256, diskSpace: diskSpace }
 };

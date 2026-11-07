@@ -77,6 +77,28 @@ function addReport(report) {
   if (status.reports.length > 200) status.reports.shift();
 }
 
+// ---- src/service/15-disk.js
+// Free space on the filesystem that holds `dir`, for /status now and for the space check
+// before copying the game data later. fs.statfs exists from Node 18.15; older Node falls
+// back to `df -Pk`. Resolves { method, path, free, total } (bytes) or { method, path, error }.
+function diskSpace(dir) {
+  return new Promise(function (resolve) {
+    if (typeof fs.statfs === 'function') {
+      return fs.statfs(dir, function (err, st) {
+        if (err) return resolve({ method: 'statfs', path: dir, error: err.message });
+        resolve({ method: 'statfs', path: dir, free: st.bavail * st.bsize, total: st.blocks * st.bsize });
+      });
+    }
+    childProcess.execFile('df', ['-Pk', dir], { timeout: 5000 }, function (err, stdout) {
+      if (err) return resolve({ method: 'df', path: dir, error: 'no fs.statfs; df: ' + err.message });
+      var cols = String(stdout).trim().split('\n').pop().trim().split(/\s+/);
+      var total = Number(cols[1]) * 1024, free = Number(cols[3]) * 1024;
+      if (!(total > 0) || isNaN(free)) return resolve({ method: 'df', path: dir, error: 'cannot read df output: ' + stdout });
+      resolve({ method: 'df', path: dir, free: free, total: total });
+    });
+  });
+}
+
 // ---- src/service/20-http.js
 // HTTP API on 127.0.0.1:PORT. The launcher is a file:// document (origin "null"), so
 // every response allows any origin and is loadable under COEP require-corp.
@@ -400,6 +422,7 @@ function install() {
   status.launcherUrl = 'file://' + path.join(root, 'build', 'launcher.html');
   mkdirp(root);
   fileDir = path.join(root, 'retail');
+  diskSpace(root).then(function (d) { status.disk = d; });
   recover(root);
   if (syncState(root).buildReady) return Promise.resolve();
   var staged = path.join(root, 'staging', 'build');
@@ -603,5 +626,5 @@ module.exports = {
     return status.launcherUrl;
   },
   onStop: function () { server.close(); },
-  _test: { parseRange: parseRange, untar: untar, sha256: sha256 }
+  _test: { parseRange: parseRange, untar: untar, sha256: sha256, diskSpace: diskSpace }
 };

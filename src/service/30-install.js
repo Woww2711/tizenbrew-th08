@@ -207,6 +207,7 @@ function install() {
   status.launcherUrl = 'file://' + path.join(root, 'build', 'launcher.html');
   mkdirp(root);
   fileDir = path.join(root, 'retail');
+  diskSpace(root).then(function (d) { status.disk = d; });
   recover(root);
   if (syncState(root).buildReady) return Promise.resolve();
   var staged = path.join(root, 'staging', 'build');
