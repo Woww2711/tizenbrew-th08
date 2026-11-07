@@ -106,3 +106,33 @@ test('a file that changed after the start answers 500 instead of a wrong length'
   assert.match(output, /\/th08\.dat 500/);
   assert.ok(!output.includes('t=' + TOKEN), 'the log never shows the token in a URL');
 });
+
+// A raw client on the Windows side that sends `send` (if any), reads `readBytes` bytes
+// (if any), then closes with a zero linger time, which sends a reset instead of a FIN.
+function resetClient(send, readBytes) {
+  const script = "$c = New-Object Net.Sockets.TcpClient('127.0.0.1', " + PORT + '); $s = $c.GetStream(); ' +
+    (send ? "$b = [Text.Encoding]::ASCII.GetBytes('" + send + "'); $s.Write($b, 0, $b.Length); " : '') +
+    (readBytes ? '$buf = New-Object byte[] ' + readBytes + '; $n = $s.Read($buf, 0, $buf.Length); ' : '') +
+    '$c.LingerState = New-Object Net.Sockets.LingerOption($true, 0); $c.Close()';
+  return new Promise((resolve, reject) => execFile(PS, ['-NoProfile', '-Command', script],
+    (e) => (e ? reject(e) : resolve())));
+}
+
+test('a client reset right after connecting does not stop the server', { skip: SKIP }, async () => {
+  // One Windows process opens and resets 40 connections in a burst.
+  const burst = "1..40 | ForEach-Object { $c = New-Object Net.Sockets.TcpClient('127.0.0.1', " + PORT + '); ' +
+    '$c.LingerState = New-Object Net.Sockets.LingerOption($true, 0); $c.Close() }';
+  await new Promise((resolve, reject) => execFile(PS, ['-NoProfile', '-Command', burst], (e) => (e ? reject(e) : resolve())));
+  await resetClient(null, 0);
+  const r = await curl([URL_BASE + '/manifest.json?t=' + TOKEN]);
+  assert.equal(r.status, 200);
+  assert.equal(server.exitCode, null, 'the server process is still running');
+});
+
+test('a client that aborts in the middle of a file does not stop the server', { skip: SKIP }, async () => {
+  const req = 'GET /thbgm.dat?t=' + TOKEN + ' HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n';
+  await resetClient(req.replace(/\\r\\n/g, '\r\n').replace(/'/g, "''"), 1000);
+  const r = await curl([URL_BASE + '/th08.dat?t=' + TOKEN]);
+  assert.equal(r.status, 200);
+  assert.equal(server.exitCode, null);
+});

@@ -119,11 +119,15 @@ Write-Host 'Enter these on the TV. Ctrl+C stops the server.'
 try {
   while ($true) {
     if (-not $listener.Pending()) { Start-Sleep -Milliseconds 100; continue }
-    $client = $listener.AcceptTcpClient()
-    $who = $client.Client.RemoteEndPoint.ToString()
-    try { Write-Log ("$who " + (Handle $client)) }
+    $client = $null
+    $who = '?'
+    try {
+      $client = $listener.AcceptTcpClient()
+      $who = $client.Client.RemoteEndPoint.ToString()
+      Write-Log ("$who " + (Handle $client))
+    }
     catch { Write-Log "$who error: $($_.Exception.Message)" }
-    finally { $client.Close() }
+    finally { if ($null -ne $client) { try { $client.Close() } catch { } } }
   }
 } finally {
   $listener.Stop()
