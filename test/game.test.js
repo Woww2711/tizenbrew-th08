@@ -76,3 +76,11 @@ test('pad presses act only while the page is focused and visible', () => {
   assert.deepEqual(TH08Game.padAction('stalled', false, info(['a']), true), { reload: true });
   assert.equal(TH08Game.padAction('loading', false, info(['a']), true), null);
 });
+
+test('after an abort (failed) the pad A reloads; other phases keep ignoring it', () => {
+  const info = (pressed) => ({ pressed, menu: false });
+  assert.deepEqual(TH08Game.padAction('failed', false, info(['a']), true), { reload: true });
+  assert.equal(TH08Game.padAction('failed', false, info(['a']), false), null);
+  assert.equal(TH08Game.padAction('failed', false, info(['b']), true), null);
+  assert.equal(TH08Game.padAction('starting', false, info(['a']), true), null);
+});

@@ -84,7 +84,7 @@ var TH08Game = (function () {
     };
   }
 
-  // What a pad sample asks the launcher to do: { start } | { reload } | { menuKeys } | { openMenu }
+  // What a pad sample asks the launcher to do: { start } | { reload } (stalled or failed) | { menuKeys } | { openMenu }
   // | null. Nothing while the page is not focused and visible (active): a pad pressed while
   // the TV shows something else must not start the game or confirm the service test.
   var PAD_MENU = { up: 'up', down: 'down', a: 'ok', b: 'back', select: 'back' };
@@ -92,7 +92,7 @@ var TH08Game = (function () {
     if (!active) return null;
     var a = info.pressed.indexOf('a') >= 0;
     if (phase === 'ready' && a) return { start: true };
-    if (phase === 'stalled' && a) return { reload: true };
+    if ((phase === 'stalled' || phase === 'failed') && a) return { reload: true };
     if (phase !== 'running') return null;
     if (menuOpen) {
       var keys = info.pressed.map(function (n) { return PAD_MENU[n]; }).filter(Boolean);
@@ -113,7 +113,8 @@ var Module = typeof document === 'undefined' ? null : (function () {
   var canvas = $('canvas');
   var phase = 'loading';         // loading | ready | starting | running | stalled | failed
   var gameFile = null, bgmFile = null, gameBytes = null, prepared = null, tracker = null;
-  var input = TH08Input.create(function (vk, on) { Module._th08_web_set_key_state(vk, on); });
+  // After an abort the runtime is gone: nothing may call into it any more.
+  var input = TH08Input.create(function (vk, on) { if (phase !== 'failed') Module._th08_web_set_key_state(vk, on); });
   var lines = [];                // the runtime's last output lines, sent with errors
   var stats = { reads: 0, readErrors: 0, readMaxMs: 0, readMs: 0, fps: [], audio: null };
   var readBroken = false, audioPrompt = false, padStart = false, showStats = false, padWarned = false;
@@ -143,9 +144,22 @@ var Module = typeof document === 'undefined' ? null : (function () {
     clearTimeout(toast.timer);
     toast.timer = setTimeout(function () { el.hidden = true; }, 2500);
   }
+  // Reload / leave the page after letting a pending save finish (at most 5 s), once.
+  var leaving = false;
+  function leave(go) {
+    if (leaving) return;
+    leaving = true;
+    var done = false;
+    function end() { if (!done) { done = true; go(); leaving = false; } }
+    if (!tracker || tracker.view().locked) { end(); return; }
+    setTimeout(end, 5000);
+    try { tracker.flush().then(end, end); } catch (e) { end(); }
+  }
+  function reloadPage() { leave(function () { location.reload(); }); }
+  function modulePage() { leave(function () { history.back(); }); }
   function fail(message, data) {
     phase = 'failed';
-    show(message + '\n\nBack: về trang module');
+    show(message + '\n\nOK / A: thử lại · Back: về trang module');
     banners.set('fatal', 'error', message);
     report('fail', 'error', message, data);
   }
@@ -155,7 +169,8 @@ var Module = typeof document === 'undefined' ? null : (function () {
   }
 
   window.onerror = function (message, source, line) {
-    banners.set('fatal', 'error', 'Lỗi: ' + message);
+    // An abort of the runtime has its own screen (onAbort); no red bar for it.
+    if (phase !== 'failed' && !/Aborted\(/.test(String(message))) banners.set('fatal', 'error', 'Lỗi: ' + message);
     report('onerror', 'error', String(message), { source: source, line: line, lines: lines.slice(-10) });
   };
   window.addEventListener('unhandledrejection', function (e) {
@@ -322,6 +337,7 @@ var Module = typeof document === 'undefined' ? null : (function () {
 
   var stall = TH08Game.stallWatch(15000), fps = TH08Game.fpsMeter(), ticks = 0;
   function tick() {
+    if (phase === 'failed') return;               // the runtime aborted: no calls into it
     ticks++;
     var visible = document.visibilityState === 'visible';
     var snap = Module._th08_web_get_frame_snapshot();
@@ -408,26 +424,43 @@ var Module = typeof document === 'undefined' ? null : (function () {
     setTimeout(sendShutdown, 1000);
   }
   function sendShutdown() {
-    fetch(SERVICE + '/shutdown', { method: 'POST' }).then(function (res) {
-      $('dialog').textContent = 'Đã gửi /shutdown: HTTP ' + res.status + '. Chờ lần đọc nhạc tiếp theo báo lỗi…';
+    // 5 s deadline: a hung request must not keep the menu busy (Back would do nothing).
+    var ctrl = typeof AbortController === 'function' ? new AbortController() : null, over = false;
+    function end(text) {
+      if (over) return;
+      over = true;
+      clearTimeout(timer);
+      if (menu) { menu.busy = false; menu.confirm = false; $('dialog').textContent = text; }
+      setTimeout(function () { if (menu) closeMenu(); }, 4000);
+    }
+    var timer = setTimeout(function () { if (ctrl) ctrl.abort(); end('Gửi /shutdown quá 5 giây: bỏ qua.'); }, 5000);
+    fetch(SERVICE + '/shutdown', { method: 'POST', signal: ctrl ? ctrl.signal : undefined }).then(function (res) {
+      end('Đã gửi /shutdown: HTTP ' + res.status + '. Chờ lần đọc nhạc tiếp theo báo lỗi…');
     }, function (e) {
-      $('dialog').textContent = 'Gửi /shutdown lỗi: ' + e.message;
-    }).then(function () { setTimeout(function () { if (menu) closeMenu(); }, 4000); });
+      end('Gửi /shutdown lỗi: ' + e.message);
+    });
   }
   var MENU_KEYS = { 38: 'up', 40: 'down', 13: 'ok', 27: 'back', 10009: 'back', 113: 'back' };
 
   window.addEventListener('keydown', function (e) {
     if (e.keyCode === TH08Input.BACK) e.preventDefault();      // Back in the game is Esc (pause)
-    if (phase === 'failed') { if (e.keyCode === TH08Input.BACK) history.back(); return; }   // the module page
+    // Back is the module page in every phase but running (there it is the game's Esc).
+    if (phase !== 'running' && e.keyCode === TH08Input.BACK) { modulePage(); return; }
     if (phase === 'ready') {
       if (e.keyCode === TH08Input.OK) { e.preventDefault(); input.block(e); start(false); }   // consumed
       return;
     }
-    if (phase === 'stalled') { if (e.keyCode === TH08Input.OK) location.reload(); return; }
+    if (phase === 'stalled' || phase === 'failed') {
+      if (e.keyCode === TH08Input.OK) { e.preventDefault(); reloadPage(); }
+      return;
+    }
     if (phase !== 'running') return;
     if (menu) {
       e.preventDefault();
-      if (MENU_KEYS[e.keyCode] && !e.repeat) menuKey(MENU_KEYS[e.keyCode]);
+      if (MENU_KEYS[e.keyCode] && !e.repeat) {
+        menuKey(MENU_KEYS[e.keyCode]);
+        if (!menu) input.block(e);               // the key that closed it: its repeats and keyup are not the game's
+      }
       return;
     }
     if (audioPrompt && e.keyCode === TH08Input.OK) { e.preventDefault(); input.block(e); resumeAudio(); return; }
@@ -445,7 +478,7 @@ var Module = typeof document === 'undefined' ? null : (function () {
   var padSeen = false;
   function samplePad() {
     var visible = document.visibilityState === 'visible', focused = document.hasFocus();
-    if (phase !== 'running' || menu) input.lock();     // the pad sends to the game only while it runs
+    if ((phase !== 'running' || menu) && phase !== 'failed') input.lock();     // the pad sends to the game only while it runs
     var info = input.sample(navigator.getGamepads ? navigator.getGamepads() : [], performance.now(), focused, visible);
     if (info.connected && !padSeen) {
       padSeen = true;
@@ -457,7 +490,7 @@ var Module = typeof document === 'undefined' ? null : (function () {
     var act = TH08Game.padAction(phase, !!menu, info, focused && visible);
     if (!act) return;
     if (act.start) start(true);                         // A reaches the game only after release
-    if (act.reload) location.reload();
+    if (act.reload) reloadPage();
     if (act.menuKeys) act.menuKeys.forEach(function (k) { if (menu) menuKey(k); });
     if (act.openMenu) openMenu();
   }
@@ -495,9 +528,14 @@ var Module = typeof document === 'undefined' ? null : (function () {
     print: remember,
     printErr: remember,
     onAbort: function (what) {
+      var afterStall = phase === 'stalled';
       phase = 'failed';
-      banners.set('fatal', 'error', 'Game dừng do lỗi: ' + what + '. Hãy thoát rồi mở lại module.');
-      report('abort', 'error', String(what), { lines: lines.slice(-20) });
+      if (menu) closeMenu();
+      // Usually the title's Quit: the next key or pad event then aborts the dead runtime. The
+      // reason stays visible, but it is no red error bar.
+      show('Game đã dừng (' + what + ').' + (afterStall ? '' : '\nThường gặp sau khi chọn Quit trên màn hình tiêu đề; nếu không, đây là lỗi.') +
+        '\n\nOK / A: chạy lại · Back: về trang module');
+      report('abort', afterStall ? 'warn' : 'error', String(what), { afterStall: afterStall, lines: lines.slice(-20) });
     },
     onRuntimeInitialized: function () { onRuntimeReady(); }
   };

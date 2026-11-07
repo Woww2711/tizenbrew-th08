@@ -110,3 +110,15 @@ test('a key passed from one pad source to another in one sample is not released 
   input.at([pad()]);
   assert.deepEqual(sent, [[16, 1], [16, 0], [38, 1], [38, 0]]);
 });
+
+test('the key that closed the launcher menu: its auto-repeat and keyup never reach the game', () => {
+  for (const e of [kb('Enter', 13), remote(13), remote(10009), kb('Escape', 27)]) {
+    const { input, sent } = mapper();
+    input.block(e);                                  // the closing keydown (the page blocks it)
+    assert.equal(input.keydown(e), null, 'auto-repeat');
+    assert.equal(input.keydown(e), null, 'auto-repeat');
+    assert.equal(input.keyup(e), null, 'release');
+    assert.deepEqual(sent, [], JSON.stringify(e));
+    assert.deepEqual(input.keydown(e) && input.keydown(e).vk !== undefined, true, 'a new press works again');
+  }
+});
