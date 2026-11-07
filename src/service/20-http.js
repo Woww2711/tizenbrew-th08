@@ -78,7 +78,10 @@ function handle(req, res) {
   setCors(res);
   var url = req.url.split('?')[0];
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
-  if (req.method === 'GET' && url === '/status') return sendJson(res, 200, status);
+  if (req.method === 'GET' && url === '/status') {
+    refreshReady();
+    return sendJson(res, 200, status);
+  }
   if (req.method === 'POST' && url === '/report') {
     return readBody(req, 65536, function (err, text) {
       if (err) return sendJson(res, 413, { error: err.message });
@@ -94,7 +97,7 @@ function handle(req, res) {
     });
   }
   if (req.method === 'POST' && url === '/open') {
-    if (!openHandler) return sendJson(res, 409, { error: 'not ready' });
+    if (!openHandler || !refreshReady()) return sendJson(res, 409, { error: 'not ready' });
     try { openHandler(); } catch (e) { return sendJson(res, 500, { error: e.message }); }
     return sendJson(res, 202, { opening: true });
   }

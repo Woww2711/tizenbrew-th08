@@ -74,10 +74,13 @@ test('unsatisfiable range answers 416', async () => {
   assert.equal(res.headers.get('content-range'), 'bytes */1048576');
 });
 
-test('names outside the allow-list, and th08.dat not copied yet, answer 404', async () => {
-  for (const name of ['missing.bin', '..%2Fbuild%2Flauncher.html', '.complete', 'th08.dat']) {
+test('names outside the allow-list answer 404; th08.dat is served whole', async () => {
+  for (const name of ['missing.bin', '..%2Fbuild%2Flauncher.html', '.complete', '..%2Fstate.json']) {
     assert.equal((await fetch(BASE + '/file/' + name)).status, 404, name);
   }
+  const res = await fetch(BASE + '/file/th08.dat');
+  assert.equal(res.status, 200);
+  assert.equal((await res.arrayBuffer()).byteLength, 4096);
 });
 
 test('launchUrl returns the launcher url once ready and records the method', () => {

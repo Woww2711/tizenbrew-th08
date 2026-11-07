@@ -1,6 +1,7 @@
 'use strict';
 // Test helpers. loadService runs service.js the way TizenBrew 2.0.5's serviceLauncher.js
 // does: in a vm context holding copies of Node's globals plus require, tizen and module.
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -55,18 +56,42 @@ function syntheticByte(i) {
 
 const BUILD_FILES = ['th08-web.js', 'th08-web.wasm', 'launcher.html', 'saves.js', 'probe.js'];
 
-// A data dir that already holds this version's build (so no download happens) and a
-// retail/thbgm.dat of 1 MiB whose byte i is syntheticByte(i). Returns the build dir.
-function preinstall(dataDir) {
+function sha256(buf) {
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+// Stand-ins for the game data: th08.dat 4 KiB, thbgm.dat 1 MiB whose byte i is syntheticByte(i).
+function syntheticData() {
+  const th08 = Buffer.alloc(4096);
+  for (let i = 0; i < th08.length; i++) th08[i] = (i * 7) % 256;
+  const thbgm = Buffer.alloc(1048576);
+  for (let i = 0; i < thbgm.length; i++) thbgm[i] = syntheticByte(i);
+  return { 'th08.dat': th08, 'thbgm.dat': thbgm };
+}
+
+// The manifest entries ({ name, size, sha256 }) of `data` ({ name: Buffer }).
+function manifestOf(data) {
+  return Object.keys(data).map((name) => ({ name, size: data[name].length, sha256: sha256(data[name]) }));
+}
+
+// Writes `data` as a whole active set: the files plus retail/.complete.
+function writeDataSet(root, data, sub = 'retail') {
+  const dir = path.join(root, sub);
+  fs.mkdirSync(dir, { recursive: true });
+  for (const [name, buf] of Object.entries(data)) fs.writeFileSync(path.join(dir, name), buf);
+  fs.writeFileSync(path.join(dir, '.complete'), JSON.stringify({ version: VERSION, files: manifestOf(data) }));
+  return dir;
+}
+
+// A data dir that already holds this version's build (so no download happens) and, unless
+// `data` is false, the synthetic game data set in retail/. Returns the build dir.
+function preinstall(dataDir, { data = true } = {}) {
   const root = path.join(dataDir, 'th08');
   const dir = path.join(root, 'build');
   fs.mkdirSync(dir, { recursive: true });
   for (const name of BUILD_FILES) fs.writeFileSync(path.join(dir, name), 'placeholder ' + name);
   fs.writeFileSync(path.join(dir, '.complete'), VERSION);
-  fs.mkdirSync(path.join(root, 'retail'));
-  const buf = Buffer.alloc(1048576);
-  for (let i = 0; i < buf.length; i++) buf[i] = syntheticByte(i);
-  fs.writeFileSync(path.join(root, 'retail', 'thbgm.dat'), buf);
+  if (data) writeDataSet(root, syntheticData());
   return dir;
 }
 
@@ -93,4 +118,5 @@ function makeTarGz(files) {
   return zlib.gzipSync(Buffer.concat(blocks));
 }
 
-module.exports = { loadService, waitFor, tempDir, preinstall, makeTarGz, syntheticByte, VERSION, ROOT, BUILD_FILES };
+module.exports = { loadService, waitFor, tempDir, preinstall, makeTarGz, syntheticByte, syntheticData, manifestOf,
+  writeDataSet, sha256, VERSION, ROOT, BUILD_FILES };

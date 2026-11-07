@@ -73,7 +73,7 @@ test('installs the runtime and launcher files into build/ through staging', asyn
     assert.equal(fs.readFileSync(path.join(dir, '.complete'), 'utf8'), VERSION);
     assert.ok(!fs.existsSync(path.join(dataDir, 'th08', 'staging')), 'staging removed');
     assert.ok(!fs.existsSync(path.join(dataDir, 'th08', 'build.old')), 'build.old removed');
-    assert.deepEqual(state(dataDir), { buildVersion: VERSION, buildReady: true });
+    assert.deepEqual(state(dataDir), { buildVersion: VERSION, buildReady: true, dataReady: false, files: [] });
   } finally { svc.onStop(); }
 });
 
@@ -92,7 +92,7 @@ test('a complete build of this version is kept without downloading', async () =>
 test('an older build is replaced and state.json keeps fields it does not own', async () => {
   const dataDir = tempDir();
   fakeBuild(dataDir, 'build', '0.0.1-old', 'old');
-  fs.writeFileSync(path.join(dataDir, 'th08', 'state.json'), JSON.stringify({ dataReady: true, buildReady: true }));
+  fs.writeFileSync(path.join(dataDir, 'th08', 'state.json'), JSON.stringify({ note: 'kept', buildReady: true }));
   const svc = loadService(envFor(dataDir, 18789));
   try {
     await settled(svc);
@@ -100,7 +100,7 @@ test('an older build is replaced and state.json keeps fields it does not own', a
     const dir = path.join(dataDir, 'th08', 'build');
     assert.equal(fs.readFileSync(path.join(dir, 'probe.js'), 'utf8'), 'asset probe.js');
     assert.equal(fs.readFileSync(path.join(dir, '.complete'), 'utf8'), VERSION);
-    assert.deepEqual(state(dataDir), { dataReady: true, buildReady: true, buildVersion: VERSION });
+    assert.deepEqual(state(dataDir), { note: 'kept', buildReady: true, buildVersion: VERSION, dataReady: false, files: [] });
   } finally { svc.onStop(); }
 });
 
@@ -113,7 +113,7 @@ test('a failed install leaves the active build untouched and removes staging', a
     assert.match(svc.status.error, /sha256 mismatch/);
     assert.equal(fs.readFileSync(path.join(dataDir, 'th08', 'build', 'probe.js'), 'utf8'), 'old probe.js');
     assert.ok(!fs.existsSync(path.join(dataDir, 'th08', 'staging')));
-    assert.deepEqual(state(dataDir), { buildVersion: '0.0.1-old', buildReady: false });
+    assert.deepEqual(state(dataDir), { buildVersion: '0.0.1-old', buildReady: false, dataReady: false, files: [] });
   } finally { svc.onStop(); }
 });
 

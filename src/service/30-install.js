@@ -4,9 +4,9 @@
 //   <DATA>/th08/staging/     a new build is assembled in staging/build; removed when done,
 //                            on error and at every start
 //   <DATA>/th08/build.old/   the previous build, only while activating
-//   <DATA>/th08/state.json   { buildVersion, buildReady, ... } mirrors build/; later plans
-//                            add dataReady and files to it
-//   <DATA>/th08/retail/      th08.dat, thbgm.dat (copied from the PC in a later plan)
+//   <DATA>/th08/state.json   { buildVersion, buildReady, dataReady, files } mirrors build/
+//                            and retail/
+//   <DATA>/th08/retail/      th08.dat, thbgm.dat, .complete (copied from the PC, 35-data.js)
 // The launcher URL, file://<DATA>/th08/build/launcher.html, is the same for every version.
 
 var DOWNLOAD_TIMEOUT_MS = 60000;
@@ -151,7 +151,10 @@ function recover(root) {
 
 function syncState(root) {
   var v = buildVersionOf(path.join(root, 'build'));
-  return writeState(root, { buildVersion: v, buildReady: v === VERSION });
+  var files = dataSetOf(path.join(root, 'retail'));
+  var state = writeState(root, { buildVersion: v, buildReady: v === VERSION, dataReady: !!files, files: files || [] });
+  refreshReady();
+  return state;
 }
 
 // A service told to stop (a newer one took the port, see 45-takeover.js) must not write
@@ -206,9 +209,11 @@ function install() {
   status.dataDir = base;
   status.launcherUrl = 'file://' + path.join(root, 'build', 'launcher.html');
   mkdirp(root);
+  dataRoot = root;
   fileDir = path.join(root, 'retail');
   diskSpace(root).then(function (d) { status.disk = d; });
   recover(root);
+  recoverData(root);
   if (syncState(root).buildReady) return Promise.resolve();
   var staged = path.join(root, 'staging', 'build');
   mkdirp(staged);

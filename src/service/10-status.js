@@ -7,6 +7,11 @@ var status = {
   node: process.version,
   dataDir: null,
   launcherUrl: null,
+  ready: false,               // buildReady && dataReady && the data files on disk match (35-data.js)
+  buildReady: false,
+  dataReady: false,
+  files: [],                  // the active game data set: [{ name, size, sha256 }]
+  setup: null,                // the last POST /setup run (37-setup.js)
   openMethod: null,           // devtools | launchUrl, once the launcher was opened
   openError: null,
   startedAt: new Date().toISOString(),

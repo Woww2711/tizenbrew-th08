@@ -1,4 +1,4 @@
-// TH08 TizenBrew module service (milestone 1, step 1: persistence and update probe).
+// TH08 TizenBrew module service (milestone 1a: the game data from the PC, v0.0.3).
 // TizenBrew 2.0.x runs this file in a vm sandbox with require, tizen and module. Its Node
 // on the Q7F is v18.18.2 (milestone 0); ES5 syntax keeps a margin.
 var fs = require('fs');
@@ -22,6 +22,7 @@ var LAUNCHER_BASE = process.env.TH08_LAUNCHER_BASE ||
   'https://cdn.jsdelivr.net/gh/Woww2711/tizenbrew-th08@' + VERSION + '/launcher/';
 var LAUNCHER_FILES = ['launcher.html', 'saves.js', 'probe.js'];
 var RETAIL_FILES = ['th08.dat', 'thbgm.dat'];
+var MAX_DAT_SIZE = 1073741824;  // 1 GiB: a manifest size above this is refused (thbgm.dat is 429 MiB)
 var PAGE_MATCH = 'tizenbrew-th08';
 var MIN_NODE = [10, 4];
 var CDP_TIMEOUT_MS = Number(process.env.TH08_CDP_TIMEOUT_MS) || 10000;

@@ -21,6 +21,7 @@ function boot() {
   Promise.resolve().then(install).then(function () {
     if (status.state === 'stopped') return;
     status.state = 'ready';
+    refreshReady();
     openHandler = openLauncher;
     log('ready');
   }, function (e) {
@@ -44,7 +45,7 @@ module.exports = {
   status: status,
   // TizenBrew from 2.1 opens the URL this returns instead of the module's appPath.
   launchUrl: function () {
-    if (status.state !== 'ready') return null;
+    if (!refreshReady()) return null;
     status.openMethod = 'launchUrl';
     return status.launcherUrl;
   },
