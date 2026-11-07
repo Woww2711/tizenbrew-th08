@@ -12,7 +12,7 @@ var zlib = require('zlib');
 var urlLib = require('url');
 var childProcess = require('child_process');
 
-var VERSION = '0.0.2';
+var VERSION = '0.0.3';
 var PORT = Number(process.env.TH08_PORT) || 8790;
 var BUILD_URL = process.env.TH08_BUILD_URL ||
   'https://github.com/N0zoM1z0/th08-web/releases/download/v0.1.0/th08-web-v0.1.0.tar.gz';

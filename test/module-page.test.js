@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { ROOT } = require('./harness');
+const { ROOT, VERSION } = require('./harness');
 
 const html = fs.readFileSync(path.join(ROOT, 'app/index.html'), 'utf8');
 const script = /<script>([\s\S]*?)<\/script>/.exec(html)[1];
@@ -71,7 +71,7 @@ test('after Back, OK does not ask a stale service to open the launcher', async (
 });
 
 test('after Back, OK asks a service of the right version and state to open', async () => {
-  const page = await runPage({ version: '0.0.2', state: 'ready', backForward: true });
+  const page = await runPage({ version: VERSION, state: 'ready', backForward: true });
   await page.press(13);
   assert.equal(page.opens(), 1, 'POST /open sent: ' + page.requests.join(', '));
 });
@@ -83,7 +83,7 @@ test('a stale service without a version is shown as "?"', async () => {
 });
 
 test('an open refused, then a lost connection, is sent again once the service is ready', async () => {
-  const page = await runPage({ version: '0.0.2', state: 'ready', backForward: false, openStatus: 500 });
+  const page = await runPage({ version: VERSION, state: 'ready', backForward: false, openStatus: 500 });
   assert.equal(page.opens(), 1, 'the first open was sent and refused');
   page.net.statusDown = true;
   await page.fire(1000);                 // poll: connection lost
@@ -96,7 +96,7 @@ test('an open refused, then a lost connection, is sent again once the service is
 });
 
 test('after Back, a retry waits for OK instead of opening on its own', async () => {
-  const page = await runPage({ version: '0.0.2', state: 'ready', backForward: false, openStatus: 500 });
+  const page = await runPage({ version: VERSION, state: 'ready', backForward: false, openStatus: 500 });
   assert.equal(page.opens(), 1, 'the first open was sent and refused');
   await page.pageshow(true);             // came back from the back/forward cache: waitOk
   page.net.openStatus = 202;
@@ -109,7 +109,7 @@ test('after Back, a retry waits for OK instead of opening on its own', async () 
 });
 
 test('the error of three failed opens stays on screen after the service answers ready', async () => {
-  const page = await runPage({ version: '0.0.2', state: 'ready', backForward: false, openStatus: 500 });
+  const page = await runPage({ version: VERSION, state: 'ready', backForward: false, openStatus: 500 });
   await page.fire(2000);                 // retry 2: refused
   await page.fire(2000);                 // retry 3: refused, final error
   assert.equal(page.opens(), 3, 'three attempts: ' + page.requests.join(', '));
@@ -122,7 +122,7 @@ test('the error of three failed opens stays on screen after the service answers 
 });
 
 test('OK does not send a second open while one is still in flight', async () => {
-  const page = await runPage({ version: '0.0.2', state: 'ready', backForward: true });
+  const page = await runPage({ version: VERSION, state: 'ready', backForward: true });
   page.net.hangOpen = true;              // the first POST never gets an answer
   await page.press(13);
   assert.equal(page.opens(), 1, 'first POST sent');

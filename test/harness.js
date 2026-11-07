@@ -35,8 +35,18 @@ async function waitFor(check, timeoutMs = 5000) {
   }
 }
 
+// Every temp dir a test file creates is removed when its process exits: by then every
+// service, socket and file write of that file has ended (an earlier hook could race them).
+const created = [];
+function removeCreated() {
+  for (const dir of created.splice(0)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+}
+
 function tempDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'th08-test-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'th08-test-'));
+  if (!created.length) process.once('exit', removeCreated);
+  created.push(dir);
+  return dir;
 }
 
 function syntheticByte(i) {

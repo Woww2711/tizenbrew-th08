@@ -3,7 +3,7 @@
 // reload, a TV power cut and a module update when the launcher lives at the stable path
 // <DATA>/th08/build/launcher.html? Every run reads the probe record from /save, writes it
 // back with the count + 1 and waits until IndexedDB has it. Shown here and sent to /report.
-var PAGE_VERSION = '0.0.2';
+var PAGE_VERSION = '0.0.3';
 var SERVICE = 'http://127.0.0.1:8790';
 var PROBE_FILE = '/save/tv-probe.json';
 var service = null;   // the last /status answer

@@ -1,6 +1,6 @@
 {
   "name": "tizenbrew-th08",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "TizenBrew app module that runs th08-web (Touhou 8, WebAssembly) on Samsung Tizen TVs.",
   "license": "MIT",
   "packageType": "app",
