@@ -65,24 +65,30 @@ Allow rule, so adding an Allow rule for port 8765 does not help. In an **adminis
 PowerShell, select exactly the rules that block the server — enabled, inbound, Block, on the
 Public profile, for `powershell.exe` — and keep their names:
 
-    $block = Get-NetFirewallRule -DisplayName "Windows PowerShell" | Where-Object {
-      $_.Action -eq 'Block' -and $_.Direction -eq 'Inbound' -and $_.Enabled -eq 'True' -and
-      ($_.Profile -match 'Public|Any') -and
-      (($_ | Get-NetFirewallApplicationFilter).Program -like '*\WindowsPowerShell\v1.0\powershell.exe') }
-    $block | Format-Table Name, DisplayName, Enabled, Profile, Direction, Action
-    $block.Name | Set-Content "$env:TEMP\th08-firewall-disabled.txt"
+    $saved = "$env:TEMP\th08-firewall-disabled.txt"
+    if (Test-Path $saved) { "The list $saved already exists: restore first (below), do not run this again." } else {
+      $block = Get-NetFirewallRule -DisplayName "Windows PowerShell" | Where-Object {
+        $_.Action -eq 'Block' -and $_.Direction -eq 'Inbound' -and $_.Enabled -eq 'True' -and
+        ($_.Profile -match 'Public|Any') -and
+        (($_ | Get-NetFirewallApplicationFilter).Program -like '*\WindowsPowerShell\v1.0\powershell.exe') }
+      $block | Format-Table Name, DisplayName, Enabled, Profile, Direction, Action
+      if ($block) {
+        $block.Name | Set-Content $saved
+        $block | Disable-NetFirewallRule      # only those, for the copy
+      } }
 
-Turn off **only those**, for the copy:
+Never run the block above twice: a second run would find the rules already disabled and
+must not replace the saved list with an empty one (the `Test-Path` guard stops it). Once the
+TV has the files, turn back on exactly the rules whose names were saved (nothing else: rules
+that were already off, or that block other programs or profiles, are untouched). The list is
+deleted only after every rule is on again:
 
-    $block | Disable-NetFirewallRule
-
-Once the TV has the files, turn back on exactly the rules whose names were saved (nothing
-else: rules that were already off, or that block other programs or profiles, are untouched):
-
-    Get-Content "$env:TEMP\th08-firewall-disabled.txt" | ForEach-Object { Enable-NetFirewallRule -Name $_ }
-    Get-Content "$env:TEMP\th08-firewall-disabled.txt" | ForEach-Object { Get-NetFirewallRule -Name $_ } |
-      Format-Table Name, Enabled, Profile, Action
-    Remove-Item "$env:TEMP\th08-firewall-disabled.txt"
+    $saved = "$env:TEMP\th08-firewall-disabled.txt"
+    $names = Get-Content $saved
+    $names | ForEach-Object { Enable-NetFirewallRule -Name $_ }
+    $names | ForEach-Object { Get-NetFirewallRule -Name $_ } | Format-Table Name, Enabled, Profile, Action
+    if (-not ($names | ForEach-Object { Get-NetFirewallRule -Name $_ } | Where-Object { $_.Enabled -ne 'True' })) {
+      Remove-Item $saved } else { "Some rules are still off: the list is kept; run the restore again." }
 
 (`Enabled` must be `True` again for every listed rule.) Without Block rules, accepting the
 Windows prompt for Windows PowerShell, or an Allow rule for TCP 8765 from the TV's IP, is enough.
