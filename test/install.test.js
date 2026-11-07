@@ -13,7 +13,7 @@ const BUILD = makeTarGz({
   'th08-web.wasm': Buffer.from([0, 97, 115, 109])
 });
 const BUILD_SHA = crypto.createHash('sha256').update(BUILD).digest('hex');
-const LAUNCHER = ['launcher.html', 'saves.js', 'probe.js'];
+const LAUNCHER = ['launcher.html', 'saves.js', 'probe.js', 'remote-file.js'];
 
 // Serves /build.tar.gz (also via a redirect) and /launcher/<file>.
 let fixture;

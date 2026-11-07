@@ -22,7 +22,7 @@ var BUILD_FILES = ['th08-web.js', 'th08-web.wasm'];
 // The module's own launcher files, copied into build/ next to the runtime.
 var LAUNCHER_BASE = process.env.TH08_LAUNCHER_BASE ||
   'https://cdn.jsdelivr.net/gh/Woww2711/tizenbrew-th08@' + VERSION + '/launcher/';
-var LAUNCHER_FILES = ['launcher.html', 'saves.js', 'probe.js'];
+var LAUNCHER_FILES = ['launcher.html', 'saves.js', 'probe.js', 'remote-file.js'];
 var RETAIL_FILES = ['th08.dat', 'thbgm.dat'];
 var MAX_DAT_SIZE = 1073741824;  // 1 GiB: a manifest size above this is refused (thbgm.dat is 429 MiB)
 // Copying the game data (37-setup.js). The reserve stays free after the staged copy: TV free

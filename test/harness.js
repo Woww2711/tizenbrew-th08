@@ -54,7 +54,7 @@ function syntheticByte(i) {
   return i % 251;
 }
 
-const BUILD_FILES = ['th08-web.js', 'th08-web.wasm', 'launcher.html', 'saves.js', 'probe.js'];
+const BUILD_FILES = ['th08-web.js', 'th08-web.wasm', 'launcher.html', 'saves.js', 'probe.js', 'remote-file.js'];
 
 function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');

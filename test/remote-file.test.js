@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const { loadService, waitFor, tempDir, preinstall, syntheticByte } = require('./harness');
-const RemoteFile = require('../spike/remote-file.js');
+const RemoteFile = require('../launcher/remote-file.js');
 
 const SERVICE = 'http://127.0.0.1:18780';
 const SIZE = 1048576;
