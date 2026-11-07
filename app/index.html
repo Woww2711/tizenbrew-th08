@@ -45,16 +45,28 @@
   function canOpen() {
     return !!lastStatus && lastStatus.version === PAGE_VERSION && lastStatus.state === 'ready';
   }
+  // An open is wanted but not sent yet (the gate was closed, or a retry was held back by waitOk);
+  // poll() sends it once the service is ready again. A POST that is still waiting blocks a second one.
+  var pending = false, inFlight = false;
   function askOpen() {
-    if (!canOpen()) return;
+    if (!canOpen()) { pending = true; return; }
+    pending = false;
+    inFlight = true;
     asked++;
     show('msg', 'Đang mở trang thử…');
     request(SERVICE + '/open', { method: 'POST' }, 5000).then(function (r) {
+      inFlight = false;
       if (r.status !== 202) throw new Error('HTTP ' + r.status + ': ' + (r.body && r.body.error));
     }).catch(function (e) {
-      if (asked < 3) return setTimeout(askOpen, 2000);
+      inFlight = false;
+      if (asked < 3) return setTimeout(retry, 2000);
       fail('Không gửi được yêu cầu mở: ' + e.message + '\nBấm Back rồi mở lại module.');
     });
+  }
+  // After Back the page never opens on its own: the retry waits for OK (poll() shows the prompt).
+  function retry() {
+    if (waitOk) pending = true;
+    else askOpen();
   }
   // The port is held by another version's service (a module update does not restart it).
   // A newer service that could not take the port says so through that service's /report.
@@ -78,7 +90,7 @@
         return setTimeout(poll, 500);
       }
       if (waitOk) show('msg', 'Bấm OK để mở lại trang thử, Back để thoát.');
-      else if (!asked) askOpen();
+      else if (!inFlight && (pending || !asked)) askOpen();
       else if (s.openError) return fail('Không mở được: ' + s.openError + '\nBấm Back rồi mở lại module.');
       setTimeout(poll, 1000);
     }).catch(function () { lastStatus = null; show('msg', 'Đang chờ service…'); setTimeout(poll, 1000); });
@@ -92,7 +104,7 @@
     if (e.keyCode === 13 && waitOk && canOpen()) { waitOk = false; askOpen(); }
   });
   // Restored from the back/forward cache: the old poll loop keeps running.
-  window.addEventListener('pageshow', function (e) { if (e.persisted) { waitOk = true; asked = 0; } });
+  window.addEventListener('pageshow', function (e) { if (e.persisted) { waitOk = true; asked = 0; pending = false; } });
   waitOk = cameBack();
   poll();
 </script>
