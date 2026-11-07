@@ -16,7 +16,7 @@ test('a valid record is returned', () => {
 });
 
 test('other read errors, corrupt JSON and wrong schemas are errors, never "missing"', () => {
-  const bad = [fsWith(null, Object.assign(new Error('EIO'), { errno: 29 })), fsWith('{oops'), fsWith('null'), fsWith('{}'),
+  const bad = [fsWith(null, Object.assign(new Error('EIO'), { errno: 29 })), fsWith(null, Object.assign(new Error('EACCES'), { errno: 2 })), fsWith('{oops'), fsWith('null'), fsWith('{}'),
     fsWith(JSON.stringify(Object.assign({}, good, { count: 'a' }))), fsWith(JSON.stringify(Object.assign({}, good, { count: 0 }))),
     fsWith(JSON.stringify(Object.assign({}, good, { history: {} }))),
     fsWith(JSON.stringify(Object.assign({}, good, { history: [null] })))];

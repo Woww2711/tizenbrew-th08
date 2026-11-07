@@ -105,7 +105,7 @@ function readRecord(FS, file) {
   try {
     text = FS.readFile(file, { encoding: 'utf8' });
   } catch (e) {
-    if (e && (e.code === 'ENOENT' || e.errno === 44 || e.errno === 2)) return { missing: true };
+    if (e && (e.code === 'ENOENT' || e.errno === 44)) return { missing: true };
     return { error: 'đọc lỗi: ' + ((e && e.message) || e) };
   }
   try { rec = JSON.parse(text); } catch (e2) { return { error: 'JSON hỏng: ' + e2.message }; }
