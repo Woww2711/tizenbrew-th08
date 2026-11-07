@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- Probe page of v0.0.2/v0.0.3 (was build/launcher.html), kept for reference: it is not installed
+     since 0.0.4 and needs launcher/saves.js of tag v0.0.3 (TH08Saves.prepare/flush of that version). -->
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>TH08 — thử dữ liệu và save</title>
+<style>
+  body { margin: 0; padding: 32px 40px; background: #0b0c14; color: #eee; font: 24px sans-serif; }
+  h1 { font-size: 34px; margin: 0 0 16px; }
+  #summary { margin: 0 0 20px; padding: 16px; background: #223; font-size: 32px; white-space: pre-wrap; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 6px 14px; border-bottom: 1px solid #333; vertical-align: top; word-break: break-all; }
+  tr.ok td:nth-child(2) { color: #7f7; }
+  tr.fail td:nth-child(2) { color: #f77; }
+  #history { margin-top: 16px; font-size: 20px; color: #bbb; white-space: pre-wrap; }
+  #hint { margin-top: 16px; color: #aaf; }
+  #canvas { display: none; }
+</style>
+</head>
+<body>
+<h1>TH08 — thử dữ liệu và save (bản <span id="ver"></span>)</h1>
+<div id="summary">Đang chạy…</div>
+<table><tbody id="rows"></tbody></table>
+<div id="history"></div>
+<div id="hint" hidden>OK: chạy lại trang này · Back: về trang module</div>
+<canvas id="canvas" width="640" height="480"></canvas>
+<script src="saves.js"></script>
+<script src="remote-file.js"></script>
+<script src="probe.js"></script>
+</body>
+</html>

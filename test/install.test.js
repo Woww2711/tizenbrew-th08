@@ -13,7 +13,7 @@ const BUILD = makeTarGz({
   'th08-web.wasm': Buffer.from([0, 97, 115, 109])
 });
 const BUILD_SHA = crypto.createHash('sha256').update(BUILD).digest('hex');
-const LAUNCHER = ['launcher.html', 'saves.js', 'probe.js', 'remote-file.js'];
+const LAUNCHER = ['launcher.html', 'saves.js', 'remote-file.js', 'input.js', 'game.js'];
 
 // Serves /build.tar.gz (also via a redirect) and /launcher/<file>.
 let fixture;
@@ -85,7 +85,7 @@ test('a complete build of this version is kept without downloading', async () =>
     await settled(svc);
     assert.equal(svc.status.state, 'ready', svc.status.error);
     assert.ok(!svc.status.log.some((l) => l.indexOf('download') >= 0), 'no download');
-    assert.equal(fs.readFileSync(path.join(dataDir, 'th08', 'build', 'probe.js'), 'utf8'), 'kept probe.js');
+    assert.equal(fs.readFileSync(path.join(dataDir, 'th08', 'build', 'game.js'), 'utf8'), 'kept game.js');
   } finally { svc.onStop(); }
 });
 
@@ -98,7 +98,7 @@ test('an older build is replaced and state.json keeps fields it does not own', a
     await settled(svc);
     assert.equal(svc.status.state, 'ready', svc.status.error);
     const dir = path.join(dataDir, 'th08', 'build');
-    assert.equal(fs.readFileSync(path.join(dir, 'probe.js'), 'utf8'), 'asset probe.js');
+    assert.equal(fs.readFileSync(path.join(dir, 'game.js'), 'utf8'), 'asset game.js');
     assert.equal(fs.readFileSync(path.join(dir, '.complete'), 'utf8'), VERSION);
     assert.deepEqual(state(dataDir), { note: 'kept', buildReady: true, buildVersion: VERSION, dataReady: false, files: [] });
   } finally { svc.onStop(); }
@@ -111,7 +111,7 @@ test('a failed install leaves the active build untouched and removes staging', a
   try {
     await waitFor(() => svc.status.state === 'error');
     assert.match(svc.status.error, /sha256 mismatch/);
-    assert.equal(fs.readFileSync(path.join(dataDir, 'th08', 'build', 'probe.js'), 'utf8'), 'old probe.js');
+    assert.equal(fs.readFileSync(path.join(dataDir, 'th08', 'build', 'game.js'), 'utf8'), 'old game.js');
     assert.ok(!fs.existsSync(path.join(dataDir, 'th08', 'staging')));
     assert.deepEqual(state(dataDir), { buildVersion: '0.0.1-old', buildReady: false, dataReady: false, files: [] });
   } finally { svc.onStop(); }
@@ -125,7 +125,7 @@ test('an activation cut after build → build.old is undone at start', async () 
   try {
     await settled(svc);
     assert.equal(svc.status.state, 'ready', svc.status.error);
-    assert.equal(fs.readFileSync(path.join(dataDir, 'th08', 'build', 'probe.js'), 'utf8'), 'old probe.js');
+    assert.equal(fs.readFileSync(path.join(dataDir, 'th08', 'build', 'game.js'), 'utf8'), 'old game.js');
     assert.ok(!fs.existsSync(path.join(dataDir, 'th08', 'build.old')));
     assert.ok(!fs.existsSync(path.join(dataDir, 'th08', 'staging')));
     assert.ok(svc.status.log.some((l) => /restored build\.old/.test(l)));
@@ -140,7 +140,7 @@ test('an activation cut after staging/build → build keeps the new build', asyn
   try {
     await settled(svc);
     assert.equal(svc.status.state, 'ready', svc.status.error);
-    assert.equal(fs.readFileSync(path.join(dataDir, 'th08', 'build', 'probe.js'), 'utf8'), 'new probe.js');
+    assert.equal(fs.readFileSync(path.join(dataDir, 'th08', 'build', 'game.js'), 'utf8'), 'new game.js');
     assert.ok(!fs.existsSync(path.join(dataDir, 'th08', 'build.old')));
   } finally { svc.onStop(); }
 });

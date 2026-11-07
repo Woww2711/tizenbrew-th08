@@ -2,29 +2,35 @@
 <html lang="vi">
 <head>
 <meta charset="utf-8">
-<title>TH08 — thử dữ liệu và save</title>
+<title>Touhou 8 (TH08 Web)</title>
 <style>
-  body { margin: 0; padding: 32px 40px; background: #0b0c14; color: #eee; font: 24px sans-serif; }
-  h1 { font-size: 34px; margin: 0 0 16px; }
-  #summary { margin: 0 0 20px; padding: 16px; background: #223; font-size: 32px; white-space: pre-wrap; }
-  table { border-collapse: collapse; width: 100%; }
-  td { padding: 6px 14px; border-bottom: 1px solid #333; vertical-align: top; word-break: break-all; }
-  tr.ok td:nth-child(2) { color: #7f7; }
-  tr.fail td:nth-child(2) { color: #f77; }
-  #history { margin-top: 16px; font-size: 20px; color: #bbb; white-space: pre-wrap; }
-  #hint { margin-top: 16px; color: #aaf; }
-  #canvas { display: none; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: #000; color: #eee; overflow: hidden; font: 28px sans-serif; }
+  /* The game draws 640x480: scale it to the largest 4:3 box that fits, centred on black. */
+  #canvas { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: min(100vw, 133.334vh); height: min(100vh, 75vw); background: #000; outline: 0; }
+  #screen { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; white-space: pre-wrap; padding: 0 10%; background: #000; font-size: 40px; }
+  #banner { position: absolute; left: 0; right: 0; top: 0; padding: 14px 28px; white-space: pre-wrap; z-index: 3; }
+  #banner.warn { background: #6a4b00; }
+  #banner.error { background: #7a1020; }
+  #dialog { position: absolute; left: 15%; right: 15%; top: 35%; padding: 28px; background: #223;
+    border: 2px solid #88f; white-space: pre-wrap; text-align: center; z-index: 4; }
+  #toast { position: absolute; right: 24px; bottom: 18px; padding: 6px 16px; background: #0008; font-size: 22px; z-index: 2; }
+  #fps { position: absolute; left: 16px; bottom: 14px; font-size: 22px; color: #8f8; z-index: 2; }
 </style>
 </head>
 <body>
-<h1>TH08 — thử dữ liệu và save (bản <span id="ver"></span>)</h1>
-<div id="summary">Đang chạy…</div>
-<table><tbody id="rows"></tbody></table>
-<div id="history"></div>
-<div id="hint" hidden>OK: chạy lại trang này · Back: về trang module</div>
-<canvas id="canvas" width="640" height="480"></canvas>
+<canvas id="canvas" width="640" height="480" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+<div id="screen">Đang tải…</div>
+<div id="banner" hidden></div>
+<div id="dialog" hidden></div>
+<div id="toast" hidden></div>
+<div id="fps" hidden></div>
 <script src="saves.js"></script>
 <script src="remote-file.js"></script>
-<script src="probe.js"></script>
+<script src="input.js"></script>
+<script src="game.js"></script>
+<script async src="th08-web.js"></script>
 </body>
 </html>

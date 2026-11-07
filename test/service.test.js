@@ -23,7 +23,7 @@ test('service.js loads in a TizenBrew-like sandbox and reports its version', () 
 
 test('code that runs on the TV uses ES5 syntax', () => {
   const files = fs.readdirSync(path.join(ROOT, 'src', 'service')).map((f) => path.join('src', 'service', f))
-    .concat(['launcher/remote-file.js', 'spike/worker.js', 'spike/spike.js', 'launcher/saves.js', 'launcher/probe.js', 'launcher/input.js',
+    .concat(['launcher/remote-file.js', 'spike/worker.js', 'spike/spike.js', 'launcher/saves.js', 'launcher/probe.js', 'launcher/input.js', 'launcher/game.js', 'launcher/probe.html',
       'launcher/launcher.html', 'app/index.html'])
     .filter((f) => fs.existsSync(path.join(ROOT, f)));
   for (const f of files) {
@@ -33,7 +33,7 @@ test('code that runs on the TV uses ES5 syntax', () => {
 });
 
 test('the pages expect the version in package.json', () => {
-  for (const f of ['app/index.html']) {
+  for (const f of ['app/index.html', 'launcher/game.js']) {
     const m = /var PAGE_VERSION = '([^']*)';/.exec(fs.readFileSync(path.join(ROOT, f), 'utf8'));
     assert.ok(m, f + ' declares PAGE_VERSION');
     assert.equal(m[1], VERSION, f);

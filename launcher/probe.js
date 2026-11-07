@@ -1,5 +1,5 @@
 'use strict';
-// Milestone-1 probe (v0.0.3). (1) Does th08-web's save storage (IDBFS in IndexedDB) survive
+// Reference only since 0.0.4 (see probe.html). Milestone-1 probe (v0.0.3). (1) Does th08-web's save storage (IDBFS in IndexedDB) survive
 // a reload, a power cut and a module update at the stable path <DATA>/th08/build/launcher.html?
 // Every run first reads the probe record from /save (and says whether a record of an earlier
 // version, 0.0.2, came through the update), then writes it back with the count + 1 and waits
