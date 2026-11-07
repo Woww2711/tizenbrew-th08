@@ -13,11 +13,13 @@
 <div id="msg">Đang chờ service…</div>
 <div id="err"></div>
 <script>
-  // The service installs the spike into TizenBrew's data directory; the spike must run
-  // from file:// (only those pages get SharedArrayBuffer on the TV), and this http page
-  // cannot navigate there itself, so it asks the service to open it through DevTools.
+  // The service installs the launcher into TizenBrew's data directory; it must run from
+  // file:// (only those pages get SharedArrayBuffer on the TV), and this http page cannot
+  // navigate there itself, so it asks the service to open it through DevTools.
+  var PAGE_VERSION = '0.0.2';
   var SERVICE = 'http://127.0.0.1:8790';
-  var asked = 0;   // POST /open attempts
+  var asked = 0;        // POST /open attempts
+  var waitOk = false;   // came back from the launcher: open it again only on OK
   function show(id, text) { document.getElementById(id).textContent = text; }
   function fail(text) { show('msg', ''); show('err', text); }
   // Request + JSON body within `ms`, so a hung service cannot stop the page.
@@ -40,7 +42,7 @@
   }
   function askOpen() {
     asked++;
-    show('msg', 'Đang mở trang kiểm tra…');
+    show('msg', 'Đang mở trang thử…');
     request(SERVICE + '/open', { method: 'POST' }, 5000).then(function (r) {
       if (r.status !== 202) throw new Error('HTTP ' + r.status + ': ' + (r.body && r.body.error));
     }).catch(function (e) {
@@ -48,20 +50,43 @@
       fail('Không gửi được yêu cầu mở: ' + e.message + '\nBấm Back rồi mở lại module.');
     });
   }
+  // The port is held by another version's service (a module update does not restart it).
+  // A newer service that could not take the port says so through that service's /report.
+  function stale(s) {
+    var note = 'Chưa thấy service ' + PAGE_VERSION + ' báo về.';
+    (s.reports || []).forEach(function (r) {
+      if (r.source === 'service' && r.version === PAGE_VERSION) note = 'Service ' + PAGE_VERSION + ' báo: ' + r.message;
+    });
+    fail('Service đang chạy là bản ' + s.version + ', trang này là bản ' + PAGE_VERSION + '.\n' + note +
+      '\nRút điện TV 1 phút rồi mở lại module.');
+  }
   function poll() {
     request(SERVICE + '/status', {}, 5000).then(function (r) {
       var s = r.body;
+      if (s.version !== PAGE_VERSION) { stale(s); return setTimeout(poll, 3000); }
+      show('err', '');
       if (s.state === 'error') return fail('Lỗi: ' + s.error);
       if (s.state !== 'ready') {
         show('msg', 'Đang chuẩn bị (chỉ lần đầu): ' + (s.progress || s.state));
         return setTimeout(poll, 500);
       }
-      if (!asked) askOpen();
+      if (waitOk) show('msg', 'Bấm OK để mở lại trang thử, Back để thoát.');
+      else if (!asked) askOpen();
       else if (s.openError) return fail('Không mở được: ' + s.openError + '\nBấm Back rồi mở lại module.');
       setTimeout(poll, 1000);
     }).catch(function () { show('msg', 'Đang chờ service…'); setTimeout(poll, 1000); });
   }
-  window.addEventListener('keydown', function (e) { if (e.keyCode === 10009) history.back(); });
+  function cameBack() {
+    var nav = performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;
+    return !!nav && nav.type === 'back_forward';
+  }
+  window.addEventListener('keydown', function (e) {
+    if (e.keyCode === 10009) history.back();
+    if (e.keyCode === 13 && waitOk) { waitOk = false; askOpen(); }
+  });
+  // Restored from the back/forward cache: the old poll loop keeps running.
+  window.addEventListener('pageshow', function (e) { if (e.persisted) { waitOk = true; asked = 0; } });
+  waitOk = cameBack();
   poll();
 </script>
 </body>
