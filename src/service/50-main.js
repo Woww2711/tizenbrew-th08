@@ -14,21 +14,30 @@ function openLauncher() {
   }).then(function () { opening = false; });
 }
 
-server.on('error', function (e) {
-  status.state = 'error';
-  status.error = 'port ' + PORT + ': ' + e.message;
-});
-
-server.listen(PORT, '127.0.0.1', function () {
+// Runs once this service holds the port.
+function boot() {
+  status.state = 'starting';
+  server.on('error', function (e) { log('server error: ' + e.message); });
   Promise.resolve().then(install).then(function () {
+    if (status.state === 'stopped') return;
     status.state = 'ready';
     openHandler = openLauncher;
     log('ready');
   }, function (e) {
+    if (status.state === 'stopped') return;
     status.state = 'error';
     status.error = e.message;
     log('install failed: ' + e.message);
   });
+}
+
+start().then(function (ok) {
+  if (ok && !stoppedAfter(null)) boot();
+}, function (e) {
+  if (status.state === 'stopped') return;
+  status.state = 'error';
+  status.error = 'port ' + PORT + ': ' + e.message;
+  log(status.error);
 });
 
 module.exports = {
@@ -39,6 +48,6 @@ module.exports = {
     status.openMethod = 'launchUrl';
     return status.launcherUrl;
   },
-  onStop: function () { server.close(); },
+  onStop: function () { stopService('onStop'); },
   _test: { parseRange: parseRange, untar: untar, sha256: sha256, diskSpace: diskSpace }
 };

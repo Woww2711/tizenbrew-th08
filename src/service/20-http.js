@@ -98,6 +98,12 @@ function handle(req, res) {
     try { openHandler(); } catch (e) { return sendJson(res, 500, { error: e.message }); }
     return sendJson(res, 202, { opening: true });
   }
+  if (req.method === 'POST' && url === '/shutdown') {
+    // A newer version of this module asks for the port (see 45-takeover.js).
+    log('shutdown requested');
+    res.on('finish', function () { stopService('POST /shutdown'); });
+    return sendJson(res, 202, { version: VERSION, stopping: true });
+  }
   if (req.method === 'GET' && url.indexOf('/file/') === 0) {
     var name;
     try { name = decodeURIComponent(url.slice('/file/'.length)); } catch (e) {
