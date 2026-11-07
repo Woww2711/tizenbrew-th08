@@ -25,6 +25,18 @@ var LAUNCHER_BASE = process.env.TH08_LAUNCHER_BASE ||
 var LAUNCHER_FILES = ['launcher.html', 'saves.js', 'probe.js'];
 var RETAIL_FILES = ['th08.dat', 'thbgm.dat'];
 var MAX_DAT_SIZE = 1073741824;  // 1 GiB: a manifest size above this is refused (thbgm.dat is 429 MiB)
+// Copying the game data (37-setup.js). The reserve stays free after the staged copy: TV free
+// space was 1174 MiB with the two files at 472 MiB, and saves, logs and other apps share it.
+var DATA_RESERVE = Number(process.env.TH08_DATA_RESERVE) || 64 * 1048576;
+var SETUP_TRIES = 3;
+var SETUP_IDLE_MS = Number(process.env.TH08_SETUP_IDLE_MS) || 30000;
+var SETUP_RETRY_MS = Number(process.env.TH08_SETUP_RETRY_MS) || 2000;
+// One attempt at a file may take SETUP_FLOOR_MS + size / SETUP_MIN_RATE: for thbgm.dat
+// (429 MiB) 2 + 29 min. TV Wi-Fi should give several MiB/s (a few minutes); a PC sending
+// slower than 256 KiB/s is as good as stuck, and a fresh attempt is the better bet.
+var SETUP_MIN_RATE = Number(process.env.TH08_SETUP_MIN_RATE) || 262144;
+var SETUP_FLOOR_MS = Number(process.env.TH08_SETUP_FLOOR_MS) || 120000;
+var MANIFEST_TIMEOUT_MS = 10000;
 var PAGE_MATCH = 'tizenbrew-th08';
 var MIN_NODE = [10, 4];
 var CDP_TIMEOUT_MS = Number(process.env.TH08_CDP_TIMEOUT_MS) || 10000;
@@ -208,6 +220,22 @@ function handle(req, res) {
     if (!openHandler || !refreshReady()) return sendJson(res, 409, { error: 'not ready' });
     try { openHandler(); } catch (e) { return sendJson(res, 500, { error: e.message }); }
     return sendJson(res, 202, { opening: true });
+  }
+  if (req.method === 'POST' && url === '/setup') {
+    return readBody(req, 4096, function (err, text) {
+      if (err) return sendJson(res, 413, { error: err.message });
+      var body;
+      try { body = JSON.parse(text); } catch (e) { body = null; }
+      var input = parseSetupInput(body);
+      if (typeof input === 'string') return sendJson(res, 400, { error: input });
+      if (status.state !== 'ready') return sendJson(res, 409, { error: 'service not ready: ' + status.state, code: 'not-ready' });
+      if (setupJob) return sendJson(res, 409, { error: 'a setup is already running', code: 'running' });
+      // Replacing an active set (range reads in flight, ready staying true) is a later flow.
+      refreshReady();
+      if (status.dataReady) return sendJson(res, 409, { error: 'the game data is already set up', code: 'already-set' });
+      runSetup(input);
+      sendJson(res, 202, { started: true });
+    });
   }
   if (req.method === 'POST' && url === '/shutdown') {
     // A newer version of this module asks for the port (see 45-takeover.js).
@@ -530,6 +558,300 @@ function refreshReady() {
   return status.ready;
 }
 
+// ---- src/service/36-pc-fetch.js
+// Talking to pc/serve-th08-data.ps1 (spec §3.1) for POST /setup (37-setup.js): the manifest,
+// and one file streamed to disk while it is hashed. Every request is bounded and can be
+// aborted from outside (job.abort) when the service stops.
+
+// An Error with a code the module page turns into a message: network, token, http,
+// manifest, space, size, hash, disk, stopped.
+function setupError(code, message, extra) {
+  var e = new Error(message);
+  e.code = code;
+  if (extra) Object.keys(extra).forEach(function (k) { e[k] = extra[k]; });
+  return e;
+}
+
+function mib(bytes) { return (bytes / 1048576).toFixed(0) + ' MiB'; }
+
+// The manifest's files as [{ name, size, sha256 }] in RETAIL_FILES order, or throws.
+function parseManifest(text) {
+  var m;
+  try { m = JSON.parse(text); } catch (e) { throw setupError('manifest', 'manifest is not JSON: ' + e.message); }
+  var files = m && Array.isArray(m.files) ? m.files.map(function (f) {
+    return f && typeof f === 'object' ? { name: f.name, size: f.size,
+      sha256: typeof f.sha256 === 'string' ? f.sha256.toLowerCase() : f.sha256 } : f;
+  }) : null;
+  if (!validFiles(files)) {
+    throw setupError('manifest', 'manifest must list exactly ' + RETAIL_FILES.join(' and ') +
+      ', each with a size (1 byte to ' + mib(MAX_DAT_SIZE) + ') and a 64-hex sha256');
+  }
+  return RETAIL_FILES.map(function (name) { return files.filter(function (f) { return f.name === name; })[0]; });
+}
+
+function checkJob(job) {
+  if (job.cancelled) throw setupError('stopped', 'setup cancelled: the service stopped');
+  checkRunning();
+}
+
+// One GET to the PC server. onResponse(res, finish) consumes the response and settles with
+// finish(err, value). Bounded by SETUP_IDLE_MS without data and, if given, deadlineMs in
+// all; job.abort() ends it from outside. The URL holds the token: it is never logged.
+function pcGet(job, url, deadlineMs, onResponse) {
+  return new Promise(function (resolve, reject) {
+    var settled = false, timer = null, req;
+    function finish(err, value) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      job.abort = null;
+      if (err) { req.abort(); reject(err); } else resolve(value);
+    }
+    job.abort = function () { finish(setupError('stopped', 'setup cancelled: the service stopped')); };
+    req = http.get(url, function (res) {
+      res.on('aborted', function () { finish(setupError('network', 'the PC closed the connection')); });
+      res.on('error', function (e) { finish(setupError('network', 'connection error: ' + e.message)); });
+      onResponse(res, finish);
+    });
+    req.setTimeout(SETUP_IDLE_MS, function () {
+      finish(setupError('network', 'no data from the PC for ' + SETUP_IDLE_MS / 1000 + ' s'));
+    });
+    req.on('error', function (e) { finish(setupError('network', 'cannot reach the PC server: ' + e.message)); });
+    if (deadlineMs) {
+      timer = setTimeout(function () {
+        finish(setupError('network', 'the PC did not finish within ' + deadlineMs / 1000 + ' s'));
+      }, deadlineMs);
+    }
+  });
+}
+
+function statusError(code, what) {
+  if (code === 403) return setupError('token', 'the PC server refused the token (HTTP 403)');
+  return setupError('http', what + ': the PC server answered HTTP ' + code);
+}
+
+function fetchManifest(job, url) {
+  return pcGet(job, url, MANIFEST_TIMEOUT_MS, function (res, finish) {
+    if (res.statusCode !== 200) { res.resume(); return finish(statusError(res.statusCode, 'manifest.json')); }
+    var text = '';
+    res.setEncoding('utf8');
+    res.on('data', function (c) {
+      text += c;
+      if (text.length > 65536) finish(setupError('manifest', 'manifest larger than 64 KiB'));
+    });
+    res.on('end', function () {
+      try { finish(null, parseManifest(text)); } catch (e) { finish(e); }
+    });
+  });
+}
+
+// Time allowed for one attempt at a file, connect and body: SETUP_FLOOR_MS plus the size at
+// SETUP_MIN_RATE. The idle timeout alone would wait forever for a PC that trickles.
+function fileDeadline(size) {
+  return SETUP_FLOOR_MS + Math.ceil(size / SETUP_MIN_RATE * 1000);
+}
+
+// Writes all of `buf` at the file position: fs.write may write fewer bytes than asked.
+function writeAll(fd, buf, cb) {
+  fs.write(fd, buf, 0, buf.length, null, function (err, n) {
+    if (err) return cb(err);
+    if (n === buf.length) return cb(null);
+    if (!(n > 0)) return cb(new Error('the write made no progress'));
+    writeAll(fd, buf.slice(n), cb);
+  });
+}
+
+// Streams one file into `part`, hashing on the way; resolves with the SHA-256 once every
+// byte is written and fsync'ed and the file on disk has the manifest size. Chunks are
+// written strictly in order through a queue; the response is paused while one is written
+// (a chunk that still arrives during the pause just waits in the queue).
+function fetchFile(job, url, f, entry, part) {
+  checkJob(job);
+  var fd = fs.openSync(part, 'w'), writing = false, closeWanted = false, closed = false;
+  function closeFd() {
+    closeWanted = true;
+    if (writing || closed) return;
+    closed = true;
+    try { fs.closeSync(fd); } catch (e) { /* already closed */ }
+  }
+  job.closeFd = closeFd;
+  return pcGet(job, url, fileDeadline(f.size), function (res, finish) {
+    if (res.statusCode !== 200) { res.resume(); return finish(statusError(res.statusCode, f.name)); }
+    var hash = crypto.createHash('sha256'), got = 0, queue = [], ended = false, flushing = false;
+    function flush() {
+      flushing = true;
+      entry.phase = 'verify';
+      fs.fsync(fd, function (err) {
+        if (err) return finish(setupError('disk', 'cannot flush ' + f.name + ': ' + err.message));
+        fs.fstat(fd, function (err2, st) {
+          if (err2) return finish(setupError('disk', 'cannot stat ' + f.name + ': ' + err2.message));
+          if (st.size !== f.size) {
+            return finish(setupError('disk', f.name + ': ' + st.size + ' bytes on disk, expected ' + f.size));
+          }
+          finish(null, hash.digest('hex'));
+        });
+      });
+    }
+    function pump() {
+      if (writing || closeWanted || flushing) return;
+      if (!queue.length) {
+        if (ended) flush(); else res.resume();
+        return;
+      }
+      var c = queue.shift();
+      writing = true;
+      writeAll(fd, c, function (err) {
+        writing = false;
+        if (closeWanted) return closeFd();
+        if (err) return finish(setupError('disk', 'cannot write ' + f.name + ': ' + err.message));
+        entry.got += c.length;
+        pump();
+      });
+    }
+    res.on('data', function (c) {
+      if (closeWanted) return;
+      got += c.length;
+      if (got > f.size) return finish(setupError('size', f.name + ': the PC sent more than ' + f.size + ' bytes'));
+      hash.update(c);
+      queue.push(c);
+      res.pause();
+      pump();
+    });
+    res.on('end', function () {
+      if (got !== f.size) return finish(setupError('size', f.name + ': got ' + got + ' of ' + f.size + ' bytes'));
+      ended = true;
+      pump();
+    });
+  }).then(function (digest) { closeFd(); return digest; }, function (e) { closeFd(); throw e; });
+}
+
+// ---- src/service/37-setup.js
+// POST /setup {ip, port, token}: copies the game data once from the PC (spec §3.2).
+// GET /manifest.json → free-space check → each file streamed into staging/retail/<name>.part,
+// SHA-256 hashed on the way, fsync'ed, checked against the manifest and renamed to <name>
+// (a failed file is fetched again whole, SETUP_TRIES times in all) → .complete →
+// activateData(). Nothing in retail/ changes until both files are verified. stopService()
+// cancels a run: the request is aborted, the file closed, and staging/ is left for the next
+// service's recover() (it may already be that service's).
+var setupJob = null;            // the running copy: { cancelled, abort, closeFd }
+
+// Validates POST /setup's body; returns { ip, port, token } or an error message.
+function parseSetupInput(b) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return 'body must be a JSON object';
+  var m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(b.ip || '').trim());
+  var parts = m ? [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])] : null;
+  if (!parts || parts.some(function (n) { return n > 255; })) return 'ip must be an IPv4 address such as 192.168.1.10';
+  var port = Number(b.port);
+  if (!(port >= 1 && port <= 65535 && port % 1 === 0)) return 'port must be a whole number from 1 to 65535';
+  var token = String(b.token || '').trim();
+  if (!/^[A-Za-z0-9]{4,64}$/.test(token)) return 'token must be 4 to 64 letters or digits';
+  return { ip: parts.join('.'), port: port, token: token };
+}
+
+// Fetches `f` into dir/<name> through dir/<name>.part, whole again on a failure.
+function fetchVerified(job, base, query, f, entry, dir) {
+  var part = path.join(dir, f.name + '.part');
+  function attempt(n) {
+    checkJob(job);
+    entry.attempt = n;
+    entry.got = 0;
+    entry.phase = 'download';
+    return fetchFile(job, base + '/' + f.name + query, f, entry, part).then(function (digest) {
+      checkJob(job);
+      if (digest !== f.sha256) {
+        throw setupError('hash', f.name + ': SHA-256 ' + digest + ' does not match the manifest (' + f.sha256 + ')');
+      }
+      fs.renameSync(part, path.join(dir, f.name));
+      entry.phase = 'done';
+    }).catch(function (e) {
+      if (job.cancelled || status.state === 'stopped') throw e;
+      try { fs.unlinkSync(part); } catch (x) { /* not created */ }
+      entry.lastError = e.message;
+      if (n >= SETUP_TRIES || e.code === 'token' || e.code === 'http' || e.code === 'disk') throw e;
+      log('setup: ' + e.message + '; fetching ' + f.name + ' again');
+      return delay(SETUP_RETRY_MS).then(function () { return attempt(n + 1); });
+    });
+  }
+  return attempt(1);
+}
+
+// staging/retail → retail as one set: (1) retail → retail.old, (2) staging/retail → retail,
+// (3) remove retail.old. recoverData() completes or undoes a cut one at the next start.
+function activateData(root) {
+  checkRunning();
+  var retail = path.join(root, 'retail'), old = path.join(root, 'retail.old');
+  if (fs.existsSync(retail)) fs.renameSync(retail, old);
+  fs.renameSync(path.join(root, 'staging', 'retail'), retail);
+  removeTree(old);
+  removeTree(path.join(root, 'staging'));
+}
+
+function runSetup(input) {
+  var job = setupJob = { cancelled: false, abort: null, closeFd: null };
+  var s = status.setup = { state: 'running', phase: 'manifest', from: input.ip + ':' + input.port,
+    files: [], error: null, startedAt: new Date().toISOString(), finishedAt: null };
+  var base = 'http://' + input.ip + ':' + input.port, query = '?t=' + encodeURIComponent(input.token);
+  var staged = path.join(dataRoot, 'staging', 'retail');
+  var files = null;
+  log('setup from ' + s.from);
+  fetchManifest(job, base + '/manifest.json' + query).then(function (list) {
+    checkJob(job);
+    files = list;
+    s.files = files.map(function (f) { return { name: f.name, size: f.size, got: 0, phase: 'wait', attempt: 0 }; });
+    s.phase = 'space';
+    removeTree(staged);   // a cancelled run's leftovers, if no restart removed them
+    return diskSpace(dataRoot);
+  }).then(function (d) {
+    checkJob(job);
+    status.disk = d;
+    if (d.error) throw setupError('space', 'cannot measure the free space: ' + d.error);
+    // Only the staged copy takes new space (POST /setup is refused while a set is active,
+    // and the build is never installed while a setup runs), plus a fixed reserve.
+    var need = files.reduce(function (sum, f) { return sum + f.size; }, 0) + DATA_RESERVE;
+    if (d.free < need) {
+      throw setupError('space', 'not enough free space: need ' + mib(need) + ', free ' + mib(d.free),
+        { need: need, free: d.free });
+    }
+    mkdirp(staged);
+    s.phase = 'download';
+    return files.reduce(function (chain, f, i) {
+      return chain.then(function () { return fetchVerified(job, base, query, f, s.files[i], staged); });
+    }, Promise.resolve());
+  }).then(function () {
+    checkJob(job);
+    s.phase = 'activate';
+    if (!sizesMatch(staged, files)) throw setupError('disk', 'a staged file does not have its manifest size on disk');
+    writeAtomic(path.join(staged, '.complete'), Buffer.from(JSON.stringify({ version: VERSION, files: files })));
+    activateData(dataRoot);
+    syncState(dataRoot);
+    s.phase = 'done';
+    s.state = 'done';
+    log('setup done: game data ready');
+  }).catch(function (e) {
+    if (job.cancelled || status.state === 'stopped') {
+      s.state = 'cancelled';
+      return;
+    }
+    removeTree(path.join(dataRoot, 'staging'));
+    s.state = 'error';
+    s.error = { code: e.code || 'error', message: e.message, need: e.need, free: e.free };
+    log('setup failed: ' + e.message);
+  }).then(function () {
+    s.finishedAt = new Date().toISOString();
+    if (setupJob === job) setupJob = null;
+  });
+}
+
+// Called by stopService(): the run stops reading, writing and renaming at once.
+function cancelSetup() {
+  var job = setupJob;
+  if (!job) return;
+  job.cancelled = true;
+  if (job.abort) job.abort();
+  if (job.closeFd) job.closeFd();
+  log('setup cancelled');
+}
+
 // ---- src/service/40-devtools.js
 // Opening the file:// spike page. Chromium does not let the module page
 // (http://127.0.0.1:8081/...) navigate to file:// ("Not allowed to load local resource"),
@@ -800,6 +1122,7 @@ function stopService(reason) {
   status.state = 'stopped';
   log('stopping: ' + reason);
   clearTimeout(blockedTimer);
+  cancelSetup();
   openHandler = null;
   server.close();
   if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
@@ -858,5 +1181,6 @@ module.exports = {
     return status.launcherUrl;
   },
   onStop: function () { stopService('onStop'); },
-  _test: { parseRange: parseRange, untar: untar, sha256: sha256, diskSpace: diskSpace }
+  _test: { parseRange: parseRange, untar: untar, sha256: sha256, diskSpace: diskSpace,
+    parseSetupInput: parseSetupInput, parseManifest: parseManifest }
 };

@@ -23,6 +23,18 @@ var LAUNCHER_BASE = process.env.TH08_LAUNCHER_BASE ||
 var LAUNCHER_FILES = ['launcher.html', 'saves.js', 'probe.js'];
 var RETAIL_FILES = ['th08.dat', 'thbgm.dat'];
 var MAX_DAT_SIZE = 1073741824;  // 1 GiB: a manifest size above this is refused (thbgm.dat is 429 MiB)
+// Copying the game data (37-setup.js). The reserve stays free after the staged copy: TV free
+// space was 1174 MiB with the two files at 472 MiB, and saves, logs and other apps share it.
+var DATA_RESERVE = Number(process.env.TH08_DATA_RESERVE) || 64 * 1048576;
+var SETUP_TRIES = 3;
+var SETUP_IDLE_MS = Number(process.env.TH08_SETUP_IDLE_MS) || 30000;
+var SETUP_RETRY_MS = Number(process.env.TH08_SETUP_RETRY_MS) || 2000;
+// One attempt at a file may take SETUP_FLOOR_MS + size / SETUP_MIN_RATE: for thbgm.dat
+// (429 MiB) 2 + 29 min. TV Wi-Fi should give several MiB/s (a few minutes); a PC sending
+// slower than 256 KiB/s is as good as stuck, and a fresh attempt is the better bet.
+var SETUP_MIN_RATE = Number(process.env.TH08_SETUP_MIN_RATE) || 262144;
+var SETUP_FLOOR_MS = Number(process.env.TH08_SETUP_FLOOR_MS) || 120000;
+var MANIFEST_TIMEOUT_MS = 10000;
 var PAGE_MATCH = 'tizenbrew-th08';
 var MIN_NODE = [10, 4];
 var CDP_TIMEOUT_MS = Number(process.env.TH08_CDP_TIMEOUT_MS) || 10000;

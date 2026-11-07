@@ -50,5 +50,6 @@ module.exports = {
     return status.launcherUrl;
   },
   onStop: function () { stopService('onStop'); },
-  _test: { parseRange: parseRange, untar: untar, sha256: sha256, diskSpace: diskSpace }
+  _test: { parseRange: parseRange, untar: untar, sha256: sha256, diskSpace: diskSpace,
+    parseSetupInput: parseSetupInput, parseManifest: parseManifest }
 };

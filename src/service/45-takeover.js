@@ -129,6 +129,7 @@ function stopService(reason) {
   status.state = 'stopped';
   log('stopping: ' + reason);
   clearTimeout(blockedTimer);
+  cancelSetup();
   openHandler = null;
   server.close();
   if (typeof server.closeAllConnections === 'function') server.closeAllConnections();

@@ -101,6 +101,22 @@ function handle(req, res) {
     try { openHandler(); } catch (e) { return sendJson(res, 500, { error: e.message }); }
     return sendJson(res, 202, { opening: true });
   }
+  if (req.method === 'POST' && url === '/setup') {
+    return readBody(req, 4096, function (err, text) {
+      if (err) return sendJson(res, 413, { error: err.message });
+      var body;
+      try { body = JSON.parse(text); } catch (e) { body = null; }
+      var input = parseSetupInput(body);
+      if (typeof input === 'string') return sendJson(res, 400, { error: input });
+      if (status.state !== 'ready') return sendJson(res, 409, { error: 'service not ready: ' + status.state, code: 'not-ready' });
+      if (setupJob) return sendJson(res, 409, { error: 'a setup is already running', code: 'running' });
+      // Replacing an active set (range reads in flight, ready staying true) is a later flow.
+      refreshReady();
+      if (status.dataReady) return sendJson(res, 409, { error: 'the game data is already set up', code: 'already-set' });
+      runSetup(input);
+      sendJson(res, 202, { started: true });
+    });
+  }
   if (req.method === 'POST' && url === '/shutdown') {
     // A newer version of this module asks for the port (see 45-takeover.js).
     log('shutdown requested');
